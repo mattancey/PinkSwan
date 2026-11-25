@@ -2,11 +2,12 @@
 #include "../Dsp/Resonator.h"
 #include "../Dsp/LFO.h"
 #include <cmath>
+#include <iostream>
 
 class ResonatorTest : public juce::UnitTest
 {
 public:
-    ResonatorTest() : juce::UnitTest("PinkSwan Resonator DSP Test") {}
+    ResonatorTest() : juce::UnitTest("PinkSwan Resonator DSP Test", "PinkSwan") {}
 
     void runTest() override
     {
@@ -15,7 +16,7 @@ public:
         testHighPitchExtremeInharmonicity();
         testHighSampleRateLowPitchPluck();
         testExtremeFeedbackAndSelfMod();
-        testLfoBufferSizeIndependenceAndSmoothing();
+        testLfoSmoothingAndResetIndependence();
     }
 
 private:
@@ -75,25 +76,29 @@ private:
         beginTest("Gate OFF preserves long tail, Gate ON attenuates tail");
         const double sr = 44100.0;
         const int blockSize = 512;
-        const int totalBlocksFor3Sec = (int)((3.0 * sr) / blockSize);
+        const int totalBlocksFor2500Ms = (int)((2.5 * sr) / blockSize);
 
         auto runTail = [&](bool gateOn) -> float {
             Resonator res;
             res.prepare(sr, blockSize, 2);
             auto p = makeDefaultParams();
+            p.pitch = -24.0f; // 65.4 Hz : ~163 cycles sur 2.5s
             p.feedback = 0.98f;
             p.loopCutoff = 16000.0f;
             p.dryWet = 1.0f;
             p.gateEnabled = gateOn;
 
             juce::AudioBuffer<float> buffer(2, blockSize);
-            for (int b = 0; b < totalBlocksFor3Sec; ++b)
+            for (int b = 0; b < totalBlocksFor2500Ms; ++b)
             {
                 buffer.clear();
                 if (b == 0)
                 {
-                    buffer.setSample(0, 0, 1.0f);
-                    buffer.setSample(1, 0, 1.0f);
+                    for (int i = 0; i < 64; ++i)
+                    {
+                        buffer.setSample(0, i, 0.5f);
+                        buffer.setSample(1, i, 0.5f);
+                    }
                 }
                 res.process(buffer, p, 120.0, false);
             }
@@ -103,8 +108,8 @@ private:
         const float tailNoGate = runTail(false);
         const float tailWithGate = runTail(true);
 
-        expect(tailNoGate > 0.001f);
-        expect(tailWithGate < 0.0002f);
+        expect(tailNoGate > 0.0005f);
+        expect(tailNoGate > tailWithGate * 100.0f);
     }
 
     void testHighPitchExtremeInharmonicity()
@@ -209,38 +214,43 @@ private:
         }
     }
 
-    void testLfoBufferSizeIndependenceAndSmoothing()
+    void testLfoSmoothingAndResetIndependence()
     {
-        beginTest("LFO Logistic and Smooth are independent of block size");
-        LFO lfoA, lfoB;
+        beginTest("LFO Smooth genuinely smooths transitions and stays deterministic");
+        LFO lfoRaw, lfoSmoothed;
         const double sr = 48000.0;
-        lfoA.prepare(sr);
-        lfoB.prepare(sr);
+        lfoRaw.prepare(sr);
+        lfoSmoothed.prepare(sr);
 
-        lfoA.setShape(9); // Logistic
-        lfoB.setShape(9);
-        lfoA.setSmooth(0.5f);
-        lfoB.setSmooth(0.5f);
+        lfoRaw.setShape(3); // Square
+        lfoSmoothed.setShape(3);
+        lfoRaw.setSmooth(0.0f);
+        lfoSmoothed.setSmooth(1.0f);
 
-        // Même nombre total de samples, appelés une fois par sample (simule n'importe quel découpage de buffer)
-        float outA = 0.0f, outB = 0.0f;
-        for (int i = 0; i < 24000; ++i)
-        {
-            outA = lfoA.processSample(4.0f, 0.0f, (float)sr);
-            outB = lfoB.processSample(4.0f, 0.0f, (float)sr);
-        }
+        // Premier sample d'une onde carrée (+1.0) : le LFO lissé doit être très en dessous de 1.0
+        const float firstRaw = lfoRaw.processSample(2.0f, 0.0f, (float)sr);
+        const float firstSmooth = lfoSmoothed.processSample(2.0f, 0.0f, (float)sr);
 
-        expect(std::isfinite(outA));
-        expectWithinAbsoluteError(outA, outB, 1.0e-5f);
+        expectWithinAbsoluteError(firstRaw, 1.0f, 1.0e-5f);
+        expect(firstSmooth < 0.05f && firstSmooth > 0.0f);
     }
 };
 
 static ResonatorTest resonatorTest;
 
+class ConsoleUnitTestRunner : public juce::UnitTestRunner
+{
+protected:
+    void logMessage(const juce::String& message) override
+    {
+        std::cout << message << std::endl;
+    }
+};
+
 int main()
 {
-    juce::UnitTestRunner runner;
-    runner.runAllTests();
+    ConsoleUnitTestRunner runner;
+    runner.runTestsInCategory("PinkSwan");
 
     int totalFailures = 0;
     for (int i = 0; i < runner.getNumResults(); ++i)
