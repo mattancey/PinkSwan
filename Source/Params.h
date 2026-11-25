@@ -48,6 +48,30 @@ namespace Params
     inline constexpr auto m1_macro   = "m1_macro";   inline constexpr auto m2_macro   = "m2_macro";
     inline constexpr auto m1_lfo2    = "m1_lfo2";    inline constexpr auto m2_lfo1    = "m2_lfo1";
 
+    inline const juce::StringArray& syncOptions()
+    {
+        static const juce::StringArray opts = {
+            "Free",
+            "8 bars", "6 bars", "4 bars", "2 bars", "1 bar",
+            "1/1 T", "1/1 D",
+            "1/2", "1/2 T", "1/2 D",
+            "1/4", "1/4 T", "1/4 D",
+            "1/8", "1/8 T", "1/8 D",
+            "1/16", "1/16 T", "1/16 D",
+            "5/4", "6/4", "7/4", "9/4", "18/4"
+        };
+        return opts;
+    }
+
+    inline const juce::StringArray& shapeOptions()
+    {
+        static const juce::StringArray opts = {
+            "Sine", "Tri", "Saw Up", "Sqr", "Pulse", "Ramp",
+            "Exp Rse", "S&H", "Smth Rnd", "Logistic", "Stairs", "Dbl Sine", "SOMA"
+        };
+        return opts;
+    }
+
     inline juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     {
         juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -83,39 +107,25 @@ namespace Params
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(inharm), "Inharm", juce::NormalisableRange<float>(0.0f, 0.99f, 0.001f), 0.0f));
 
-        juce::StringArray syncOpts = {
-            "Free", "4 bars", "2 bars", "1 bar",
-            "1/1", "1/1 T", "1/1 D",
-            "1/2", "1/2 T", "1/2 D",
-            "1/4", "1/4 T", "1/4 D",
-            "1/8", "1/8 T", "1/8 D",
-            "1/16", "1/16 T", "1/16 D",
-            "5/4", "6/4", "7/4", "9/4", "18/4"
-        };
-        juce::StringArray shapeOpts = {
-            "Sine", "Tri", "Saw Up", "Sqr", "Pulse", "Ramp",
-            "Exp Rse", "S&H", "Smth Rnd", "Logistic", "Stairs", "Dbl Sine", "SOMA"
-        };
-
         layout.add(std::make_unique<juce::AudioParameterBool>(pid(lfo1Bypass), "LFO1 Bypass", false));
-        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo1Sync), "LFO1 Sync", syncOpts, 0));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo1Sync), "LFO1 Sync", syncOptions(), 0));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo1Rate), "LFO1 Rate", juce::NormalisableRange<float>(0.01f, 100.0f, 0.01f, 0.3f), 1.0f));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo1Phase), "LFO1 Phase", juce::NormalisableRange<float>(0.0f, 360.0f, 1.0f), 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo1Shape), "LFO1 Shape", shapeOpts, 0));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo1Shape), "LFO1 Shape", shapeOptions(), 0));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo1Pw), "LFO1 PW", juce::NormalisableRange<float>(0.05f, 0.95f, 0.01f), 0.5f));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo1Smooth), "LFO1 Smooth", juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f));
 
         layout.add(std::make_unique<juce::AudioParameterBool>(pid(lfo2Bypass), "LFO2 Bypass", false));
-        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo2Sync), "LFO2 Sync", syncOpts, 0));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo2Sync), "LFO2 Sync", syncOptions(), 0));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo2Rate), "LFO2 Rate", juce::NormalisableRange<float>(0.01f, 100.0f, 0.01f, 0.3f), 1.0f));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo2Phase), "LFO2 Phase", juce::NormalisableRange<float>(0.0f, 360.0f, 1.0f), 0.0f));
-        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo2Shape), "LFO2 Shape", shapeOpts, 0));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(pid(lfo2Shape), "LFO2 Shape", shapeOptions(), 0));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
             pid(lfo2Pw), "LFO2 PW", juce::NormalisableRange<float>(0.05f, 0.95f, 0.01f), 0.5f));
         layout.add(std::make_unique<juce::AudioParameterFloat>(
