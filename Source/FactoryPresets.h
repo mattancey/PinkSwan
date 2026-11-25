@@ -1,396 +1,539 @@
-#include "Resonator.h"
+#include "PluginEditor.h"
+#include "Params.h"
 
-Resonator::Resonator()
+PinkSwanAudioProcessorEditor::PinkSwanAudioProcessorEditor(PinkSwanAudioProcessor& p)
+    : AudioProcessorEditor(&p),
+      processorRef(p),
+      presetBar(p.getPresetManager())
 {
-    pitchSemitonesSmoothed.setCurrentAndTargetValue(0.0f);
-    feedbackSmoothed.setCurrentAndTargetValue(0.85f);
-    inputCutoffSmoothed.setCurrentAndTargetValue(8000.0f);
-    loopCutoffSmoothed.setCurrentAndTargetValue(4000.0f);
-    dryWetSmoothed.setCurrentAndTargetValue(0.5f);
-    jitterSmoothed.setCurrentAndTargetValue(0.0f);
-    crossFbSmoothed.setCurrentAndTargetValue(0.0f);
-    selfModSmoothed.setCurrentAndTargetValue(0.0f);
-    wetGainSmoothed.setCurrentAndTargetValue(1.0f);
-    inharmSmoothed.setCurrentAndTargetValue(0.0f);
-    pluckSmoothed.setCurrentAndTargetValue(0.0f);
-    macroSmoothed.setCurrentAndTargetValue(0.0f);
+    setLookAndFeel(&mainLookAndFeel);
+    lastSeenStateRevision = processorRef.getStateRevision();
 
-    jitterGen.seed(std::random_device{}());
-}
+    addAndMakeVisible(presetBar);
 
-void Resonator::prepare(double sampleRate, int samplesPerBlock, int numChans)
-{
-    currentSampleRate = sampleRate > 1.0 ? sampleRate : 44100.0;
-    blockSize = juce::jmax(1, samplesPerBlock);
-    numChannels = juce::jlimit(1, 2, numChans);
+    setupRotarySlider(macroSlider, macroLabel, "MACRO", *this, 0.0);
+    macroLabel.setColour(juce::Label::textColourId, pinkui::neonPink);
 
-    const double osSampleRate = currentSampleRate * 2.0;
-    const juce::uint32 osBlockSize = (juce::uint32)(blockSize * 2);
-    juce::dsp::ProcessSpec monoSpec { osSampleRate, osBlockSize, 1 };
+    setupRotarySlider(inputCutoffSlider, inputCutoffLabel, "In Cut", *this, 8000.0);
+    setupRotarySlider(loopCutoffSlider, loopCutoffLabel, "Loop Cut", *this, 4000.0);
+    setupRotarySlider(pitchSlider, pitchLabel, "Pitch", *this, 0.0);
+    setupRotarySlider(pluckSlider, pluckLabel, juce::String::fromUTF8("H\u03B2"), *this, 0.0);
+    setupRotarySlider(inharmSlider, inharmLabel, "Inharm", *this, 0.0);
+    setupRotarySlider(decaySlider, decayLabel, "Feedbk", *this, 0.85);
+    setupRotarySlider(crossFbSlider, crossFbLabel, "CrossFB", *this, 0.0);
+    setupRotarySlider(selfModSlider, selfModLabel, "SelfMod", *this, 0.0);
+    setupRotarySlider(dryWetSlider, dryWetLabel, "Dry/Wet", *this, 0.5);
+    setupRotarySlider(wetGainSlider, wetGainLabel, "WetGain", *this, 1.0);
+    setupRotarySlider(jitterSlider, jitterLabel, "Drift", *this, 0.0);
 
-    channels.resize((size_t)numChannels);
-    for (auto& ch : channels)
-    {
-        ch.delayLine.prepare(monoSpec);
-        ch.delayLine.reset();
-        ch.pluckDelay.prepare(monoSpec);
-        ch.pluckDelay.reset();
-        ch.inputFilter.prepare(monoSpec);
-        ch.inputFilter.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-        ch.inputFilter.reset();
-        ch.loopFilter.reset();
-        ch.dcBlocker.reset();
-        ch.modFilter.setCutoff(20.0f, (float)osSampleRate);
-        ch.modFilter.reset();
-        for (int i = 0; i < numAllpassCells; ++i)
-            ch.inharmAllpass[i].reset();
-    }
+    swanPanicButton.onClick = [this] { processorRef.triggerPanic(); };
+    addAndMakeVisible(swanPanicButton);
 
-    lfo1.prepare(osSampleRate);
-    lfo2.prepare(osSampleRate);
-    lfo1Value = 0.0f;
-    lfo2Value = 0.0f;
+    polarityBox.addItemList({ "Positive", "Negative" }, 1);
+    addAndMakeVisible(polarityBox);
+    polarityLabel.setText("Polarity", juce::dontSendNotification);
+    polarityLabel.setJustificationType(juce::Justification::centred);
+    polarityLabel.setColour(juce::Label::textColourId, pinkui::textWhite);
+    addAndMakeVisible(polarityLabel);
 
-    pitchSemitonesSmoothed.reset(osSampleRate, 0.03);
-    feedbackSmoothed.reset(osSampleRate, 0.02);
-    inputCutoffSmoothed.reset(osSampleRate, 0.02);
-    loopCutoffSmoothed.reset(osSampleRate, 0.02);
-    dryWetSmoothed.reset(osSampleRate, 0.02);
-    jitterSmoothed.reset(osSampleRate, 0.05);
-    crossFbSmoothed.reset(osSampleRate, 0.03);
-    selfModSmoothed.reset(osSampleRate, 0.03);
-    wetGainSmoothed.reset(osSampleRate, 0.02);
-    inharmSmoothed.reset(osSampleRate, 0.03);
-    pluckSmoothed.reset(osSampleRate, 0.03);
-    macroSmoothed.reset(osSampleRate, 0.03);
+    gateLabel.setText("Gate (-48 dB)", juce::dontSendNotification);
+    gateLabel.setJustificationType(juce::Justification::centred);
+    gateLabel.setColour(juce::Label::textColourId, pinkui::textWhite);
+    addAndMakeVisible(gateLabel);
 
-    lastAppliedInCutoff = -1.0f;
-    lastAppliedLoopCutoff = -1.0f;
+    gateButton.setClickingTogglesState(true);
+    gateButton.setButtonText("OFF");
+    gateButton.onStateChange = [this] {
+        gateButton.setButtonText(gateButton.getToggleState() ? "ON" : "OFF");
+    };
+    addAndMakeVisible(gateButton);
 
-    // Enveloppe du gate : ouverture douce (~3 ms, zéro clic), relâchement de ~2.0 s (-60 dB en 2.0 s -> tau = 2.0 / 6.91)
-    gateEnvelope = 1.0f;
-    gateAttackCoeff = 1.0f - std::exp(-1.0f / (0.003f * (float)osSampleRate));
-    gateReleaseCoeff = 1.0f - std::exp(-1.0f / (0.29f * (float)osSampleRate));
+    drawerButton.setButtonText("MODULATION");
+    drawerButton.onClick = [this] {
+        isDrawerOpen = !isDrawerOpen;
+        forceLfoUiRefresh = true;
+        setSize(850, isDrawerOpen ? 830 : 480);
+    };
+    addAndMakeVisible(drawerButton);
 
-    // Filtre de drift normalisé à 15 Hz (équivalent exact de 0.001f à 48 kHz X2)
-    driftFilterCoeff = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 15.0f / (float)osSampleRate);
-
-    loopOutputs[0] = 0.0f;
-    loopOutputs[1] = 0.0f;
-    jitterState[0] = 0.0f;
-    jitterState[1] = 0.0f;
-
-    oversampler = std::make_unique<juce::dsp::Oversampling<float>>(
-        numChannels, 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR);
-    oversampler->initProcessing((size_t)blockSize);
-    oversampler->reset();
-}
-
-void Resonator::reset()
-{
-    for (auto& ch : channels)
-    {
-        ch.delayLine.reset();
-        ch.pluckDelay.reset();
-        ch.inputFilter.reset();
-        ch.loopFilter.reset();
-        ch.dcBlocker.reset();
-        ch.modFilter.reset();
-        for (int i = 0; i < numAllpassCells; ++i)
-            ch.inharmAllpass[i].reset();
-    }
-
-    loopOutputs[0] = 0.0f;
-    loopOutputs[1] = 0.0f;
-    jitterState[0] = 0.0f;
-    jitterState[1] = 0.0f;
-    gateEnvelope = 1.0f;
-    lastAppliedInCutoff = -1.0f;
-    lastAppliedLoopCutoff = -1.0f;
-
-    if (oversampler)
-        oversampler->reset();
-}
-
-int Resonator::getLatency() const
-{
-    if (oversampler)
-        return (int)oversampler->getLatencyInSamples();
-    return 0;
-}
-
-void Resonator::process(juce::AudioBuffer<float>& buffer, const ModParams& p, double bpm, bool isNegative)
-{
-    if (!oversampler)
-        return;
-
-    juce::dsp::AudioBlock<float> block(buffer);
-    auto upBlock = oversampler->processSamplesUp(block);
-    processInternal(upBlock, p, bpm, isNegative, currentSampleRate * 2.0);
-    oversampler->processSamplesDown(block);
-}
-
-float Resonator::allpassPhaseDelay(float a, float omega) noexcept
-{
-    if (omega < 1.0e-4f)
-        return (1.0f + a) / (1.0f - a + 1.0e-5f);
-
-    const float sinW = std::sin(omega);
-    const float cosW = std::cos(omega);
-    return 1.0f + (2.0f / omega) * std::atan2(a * sinW, 1.0f - a * cosW);
-}
-
-void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModParams& p, double bpm, bool isNegative, double sr)
-{
-    const int activeChannels = juce::jmin((int)channels.size(), (int)block.getNumChannels());
-    const int numSamples = (int)block.getNumSamples();
-    if (activeChannels <= 0 || numSamples <= 0)
-        return;
-
-    const float polarityMultiplier = isNegative ? -1.0f : 1.0f;
-    const float safeBpm = (float)juce::jlimit(20.0, 400.0, bpm);
-
-    auto getLfoHz = [&](int syncIdx, float rate) noexcept -> float {
-        if (syncIdx == 0)
-            return rate;
-
-        const float beatsPerSec = safeBpm / 60.0f;
-        float beatsPerCycle = 1.0f;
-        switch (syncIdx)
-        {
-            case 1:  beatsPerCycle = 32.0f; break;                // 8 bars
-            case 2:  beatsPerCycle = 24.0f; break;                // 6 bars
-            case 3:  beatsPerCycle = 16.0f; break;                // 4 bars
-            case 4:  beatsPerCycle = 8.0f; break;                 // 2 bars
-            case 5:  beatsPerCycle = 4.0f; break;                 // 1 bar
-            case 6:  beatsPerCycle = 4.0f * (2.0f / 3.0f); break; // 1/1 T
-            case 7:  beatsPerCycle = 4.0f * 1.5f; break;          // 1/1 D
-            case 8:  beatsPerCycle = 2.0f; break;                 // 1/2
-            case 9:  beatsPerCycle = 2.0f * (2.0f / 3.0f); break; // 1/2 T
-            case 10: beatsPerCycle = 2.0f * 1.5f; break;          // 1/2 D
-            case 11: beatsPerCycle = 1.0f; break;                 // 1/4
-            case 12: beatsPerCycle = 2.0f / 3.0f; break;          // 1/4 T
-            case 13: beatsPerCycle = 1.5f; break;                 // 1/4 D
-            case 14: beatsPerCycle = 0.5f; break;                 // 1/8
-            case 15: beatsPerCycle = 0.5f * (2.0f / 3.0f); break; // 1/8 T
-            case 16: beatsPerCycle = 0.5f * 1.5f; break;          // 1/8 D
-            case 17: beatsPerCycle = 0.25f; break;                // 1/16
-            case 18: beatsPerCycle = 0.25f * (2.0f / 3.0f); break;// 1/16 T
-            case 19: beatsPerCycle = 0.25f * 1.5f; break;         // 1/16 D
-            case 20: beatsPerCycle = 5.0f; break;                 // 5/4
-            case 21: beatsPerCycle = 6.0f; break;                 // 6/4
-            case 22: beatsPerCycle = 7.0f; break;                 // 7/4
-            case 23: beatsPerCycle = 9.0f; break;                 // 9/4
-            case 24: beatsPerCycle = 18.0f; break;                // 18/4
-            default: beatsPerCycle = 1.0f; break;
-        }
-        return beatsPerSec / beatsPerCycle;
+    const juce::StringArray names = {
+        "Pitch", "Feed", "InCut", "LoopC", juce::String::fromUTF8("H\u03B2"),
+        "Inharm", "Cross", "Self", "Drift", "DryWet", "WetGain", "Macro", "LFO 1", "LFO 2"
+    };
+    const juce::StringArray m1Ids = {
+        Params::m1_pitch, Params::m1_feed, Params::m1_incut, Params::m1_loopcut, Params::m1_hbeta,
+        Params::m1_inharm, Params::m1_cross, Params::m1_self, Params::m1_drift, Params::m1_drywet,
+        Params::m1_wetgain, Params::m1_macro
+    };
+    const juce::StringArray m2Ids = {
+        Params::m2_pitch, Params::m2_feed, Params::m2_incut, Params::m2_loopcut, Params::m2_hbeta,
+        Params::m2_inharm, Params::m2_cross, Params::m2_self, Params::m2_drift, Params::m2_drywet,
+        Params::m2_wetgain, Params::m2_macro
     };
 
-    const float lfo1HzBase = getLfoHz(p.lfo1Sync, p.lfo1Rate);
-    const float lfo2HzBase = getLfoHz(p.lfo2Sync, p.lfo2Rate);
-
-    lfo1.setShape(p.lfo1Shape);
-    lfo1.setPulseWidth(p.lfo1Pw);
-    lfo1.setSmooth(p.lfo1Smooth);
-
-    lfo2.setShape(p.lfo2Shape);
-    lfo2.setPulseWidth(p.lfo2Pw);
-    lfo2.setSmooth(p.lfo2Smooth);
-
-    pitchSemitonesSmoothed.setTargetValue(p.pitch);
-    feedbackSmoothed.setTargetValue(p.feedback);
-    inputCutoffSmoothed.setTargetValue(juce::jlimit(20.0f, 20000.0f, p.inputCutoff));
-    loopCutoffSmoothed.setTargetValue(juce::jlimit(20.0f, 20000.0f, p.loopCutoff));
-    dryWetSmoothed.setTargetValue(p.dryWet);
-    jitterSmoothed.setTargetValue(p.jitter);
-    crossFbSmoothed.setTargetValue(p.crossFb);
-    selfModSmoothed.setTargetValue(p.selfMod);
-    wetGainSmoothed.setTargetValue(p.wetGain);
-    inharmSmoothed.setTargetValue(p.inharm);
-    pluckSmoothed.setTargetValue(p.pluck);
-    macroSmoothed.setTargetValue(p.macro);
-
-    float* channelData[2] = { nullptr, nullptr };
-    for (int ch = 0; ch < activeChannels; ++ch)
-        channelData[ch] = block.getChannelPointer((size_t)ch);
-
-    for (int i = 0; i < numSamples; ++i)
+    for (int i = 0; i < 14; ++i)
     {
-        // LFO sample par sample avec modulation croisée
-        const float lfo1Hz = juce::jlimit(0.01f, 100.0f, lfo1HzBase + (lfo2Value * p.m2_lfo1 * 50.0f));
-        const float lfo2Hz = juce::jlimit(0.01f, 100.0f, lfo2HzBase + (lfo1Value * p.m1_lfo2 * 50.0f));
+        matrixLabels[i].setText(names[i], juce::dontSendNotification);
+        matrixLabels[i].setJustificationType(juce::Justification::centred);
+        matrixLabels[i].setColour(juce::Label::textColourId, pinkui::textWhite);
+        addChildComponent(matrixLabels[i]);
+    }
 
-        lfo1Value = p.lfo1Bypass ? 0.0f : lfo1.processSample(lfo1Hz, p.lfo1Phase, (float)sr);
-        lfo2Value = p.lfo2Bypass ? 0.0f : lfo2.processSample(lfo2Hz, p.lfo2Phase, (float)sr);
+    matrixReadoutLabel.setJustificationType(juce::Justification::centredRight);
+    matrixReadoutLabel.setColour(juce::Label::textColourId, pinkui::softPink);
+    matrixReadoutLabel.setFont(juce::Font(juce::FontOptions(12.5f)));
+    addChildComponent(matrixReadoutLabel);
 
-        const float l1 = lfo1Value;
-        const float l2 = lfo2Value;
-
-        auto mod = [&](float base, float d1, float d2, float minVal, float maxVal) noexcept -> float {
-            return juce::jlimit(minVal, maxVal, base + (l1 * d1) + (l2 * d2));
+    auto setupMini = [this](juce::Slider& s, const juce::String& labelText) {
+        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        s.setDoubleClickReturnValue(true, 0.0);
+        s.setLookAndFeel(&matrixLookAndFeel);
+        s.onValueChange = [this, &s, labelText] {
+            const double v = s.getValue();
+            const juce::String sign = v > 0.0005 ? "+" : "";
+            matrixReadoutLabel.setText(labelText + ": " + sign + juce::String(v, 2), juce::dontSendNotification);
         };
+        addChildComponent(s);
+    };
 
-        const float baseMacro = macroSmoothed.getNextValue();
-        const float mMacro = mod(baseMacro, p.m1_macro, p.m2_macro, 0.0f, 1.0f);
-        const float macroBoost = mMacro > 0.001f ? mMacro : 0.0f;
+    for (int i = 0; i < 12; ++i)
+    {
+        setupMini(m1Sliders[i], "LFO1 -> " + names[i]);
+        m1Atts[i] = std::make_unique<SliderAttachment>(processorRef.apvts, m1Ids[i], m1Sliders[i]);
 
-        const float pitchSt = mod(pitchSemitonesSmoothed.getNextValue() + (macroBoost * 24.0f),
-                                  p.m1_pitch * 24.0f, p.m2_pitch * 24.0f, -36.0f, 36.0f);
-        const float fb = mod(feedbackSmoothed.getNextValue() + (macroBoost * 0.1f),
-                             p.m1_feed, p.m2_feed, 0.0f, 0.98f) * polarityMultiplier;
-        const float inCut = mod(inputCutoffSmoothed.getNextValue() * (1.0f + macroBoost * 3.0f),
-                                p.m1_incut * 10000.0f, p.m2_incut * 10000.0f, 20.0f, 20000.0f);
-        const float loopCut = mod(loopCutoffSmoothed.getNextValue() * (1.0f + macroBoost * 3.0f),
-                                  p.m1_loopcut * 10000.0f, p.m2_loopcut * 10000.0f, 20.0f, 20000.0f);
-        const float pluck = mod(pluckSmoothed.getNextValue(), p.m1_hbeta, p.m2_hbeta, 0.0f, 1.0f);
-        const float inharm = mod(inharmSmoothed.getNextValue(), p.m1_inharm, p.m2_inharm, 0.0f, 0.99f);
-        const float crossFB = mod(crossFbSmoothed.getNextValue(), p.m1_cross, p.m2_cross, 0.0f, 0.98f);
-        const float selfModAmt = mod(selfModSmoothed.getNextValue(), p.m1_self, p.m2_self, 0.0f, 1.0f);
-        const float drift = mod(jitterSmoothed.getNextValue(), p.m1_drift, p.m2_drift, 0.0f, 1.0f);
-        const float wetMix = mod(dryWetSmoothed.getNextValue(), p.m1_drywet, p.m2_drywet, 0.0f, 1.0f);
-        const float currentWetGain = mod(wetGainSmoothed.getNextValue(), p.m1_wetgain, p.m2_wetgain, 0.0f, 2.0f);
+        setupMini(m2Sliders[i], "LFO2 -> " + names[i]);
+        m2Atts[i] = std::make_unique<SliderAttachment>(processorRef.apvts, m2Ids[i], m2Sliders[i]);
+    }
 
-        // Mise à jour des filtres sans recalcul trigonométrique inutile à l'arrêt
-        if (std::abs(inCut - lastAppliedInCutoff) > 0.05f)
-        {
-            for (int ch = 0; ch < activeChannels; ++ch)
-                channels[(size_t)ch].inputFilter.setCutoffFrequency(inCut);
-            lastAppliedInCutoff = inCut;
-        }
-        if (std::abs(loopCut - lastAppliedLoopCutoff) > 0.05f)
-        {
-            for (int ch = 0; ch < activeChannels; ++ch)
-                channels[(size_t)ch].loopFilter.setCutoff(loopCut, (float)sr);
-            lastAppliedLoopCutoff = loopCut;
-        }
+    setupMini(m2Sliders[12], "LFO2 -> LFO1");
+    m2Atts[12] = std::make_unique<SliderAttachment>(processorRef.apvts, Params::m2_lfo1, m2Sliders[12]);
 
-        const float baseDelaySamples = semitonesToDelaySamples(pitchSt, sr);
+    setupMini(m1Sliders[13], "LFO1 -> LFO2");
+    m1Atts[13] = std::make_unique<SliderAttachment>(processorRef.apvts, Params::m1_lfo2, m1Sliders[13]);
 
-        // Calcul d'inharmonicité avec compensation exacte du délai de phase à la fréquence jouée
-        float inharmCoeff = 0.0f;
-        float delaySamples = baseDelaySamples;
-        if (inharm > 0.001f && baseDelaySamples > 28.0f)
-        {
-            const float omega0 = juce::MathConstants<float>::twoPi / baseDelaySamples;
-            float desiredA = juce::jlimit(0.0f, 0.95f, inharm * 0.95f);
-            float totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
+    auto styleBypass = [](juce::TextButton& b, const juce::String& txt) {
+        b.setButtonText(txt);
+        b.setColour(juce::TextButton::buttonColourId, pinkui::surfaceDark);
+        b.setColour(juce::TextButton::buttonOnColourId, pinkui::dangerRed.withAlpha(0.25f));
+        b.setColour(juce::TextButton::textColourOffId, pinkui::textWhite);
+        b.setColour(juce::TextButton::textColourOnId, pinkui::dangerRed);
+        b.setClickingTogglesState(true);
+    };
+    styleBypass(lfo1BypassButton, "BYP\n1");
+    styleBypass(lfo2BypassButton, "BYP\n2");
+    addChildComponent(lfo1BypassButton);
+    addChildComponent(lfo2BypassButton);
 
-            if (totalPhaseDelay > baseDelaySamples - 4.0f)
-            {
-                float lo = 0.0f;
-                float hi = desiredA;
-                for (int iter = 0; iter < 6; ++iter)
-                {
-                    const float mid = 0.5f * (lo + hi);
-                    const float d = (float)numAllpassCells * allpassPhaseDelay(mid, omega0);
-                    if (d <= baseDelaySamples - 4.0f)
-                        lo = mid;
-                    else
-                        hi = mid;
-                }
-                desiredA = lo;
-                totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
-            }
+    lfo1BypassAtt = std::make_unique<ButtonAttachment>(processorRef.apvts, Params::lfo1Bypass, lfo1BypassButton);
+    lfo2BypassAtt = std::make_unique<ButtonAttachment>(processorRef.apvts, Params::lfo2Bypass, lfo2BypassButton);
 
-            inharmCoeff = desiredA;
-            delaySamples = baseDelaySamples - totalPhaseDelay;
-        }
+    lfo1RowLabel.setText("LFO 1", juce::dontSendNotification);
+    lfo1RowLabel.setJustificationType(juce::Justification::centredLeft);
+    lfo1RowLabel.setColour(juce::Label::textColourId, pinkui::neonPink);
+    lfo1RowLabel.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    addChildComponent(lfo1RowLabel);
 
-        // Drift mono-cohérent avec la somme de 2 bruits lissés à 15 Hz (fidèle à BlueSwan, stable au SR)
-        if (drift > 0.001f)
-        {
-            float driftSum = 0.0f;
-            for (int j = 0; j < 2; ++j)
-            {
-                const float noise = jitterDist(jitterGen);
-                jitterState[j] += driftFilterCoeff * (noise - jitterState[j]);
-                driftSum += jitterState[j];
-            }
-            delaySamples += driftSum * drift * (float)(sr * 0.005);
-        }
+    lfo2RowLabel.setText("LFO 2", juce::dontSendNotification);
+    lfo2RowLabel.setJustificationType(juce::Justification::centredLeft);
+    lfo2RowLabel.setColour(juce::Label::textColourId, pinkui::neonPink);
+    lfo2RowLabel.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    addChildComponent(lfo2RowLabel);
 
-        // Self-modulation partagée sur la moyenne des canaux
-        if (selfModAmt > 0.001f)
-        {
-            float modulator = 0.0f;
-            for (int ch = 0; ch < activeChannels; ++ch)
-                modulator += channels[(size_t)ch].modFilter.process(loopOutputs[ch]);
-            modulator /= (float)activeChannels;
-            delaySamples += modulator * selfModAmt * (float)(sr * 0.01);
-        }
+    lfo1SyncBox.addItemList(Params::syncOptions(), 1);   addChildComponent(lfo1SyncBox);
+    lfo1ShapeBox.addItemList(Params::shapeOptions(), 1); addChildComponent(lfo1ShapeBox);
+    lfo2SyncBox.addItemList(Params::syncOptions(), 1);   addChildComponent(lfo2SyncBox);
+    lfo2ShapeBox.addItemList(Params::shapeOptions(), 1); addChildComponent(lfo2ShapeBox);
 
-        delaySamples = juce::jlimit(4.0f, maxDelaySamples - 8.0f, delaySamples);
+    auto setupLfoKnob = [this](juce::Slider& s, juce::Label& nameLabel, juce::Label& valLabel,
+                               const juce::String& name, double defaultVal) {
+        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+        s.setDoubleClickReturnValue(true, defaultVal);
+        addChildComponent(s);
 
-        // Gate optionnel sans clic (seuil -48 dB = 0.00398107, relâchement 2.0 s)
-        float inputAbs = 0.0f;
-        for (int ch = 0; ch < activeChannels; ++ch)
-            inputAbs = juce::jmax(inputAbs, std::abs(channelData[ch][i]));
+        nameLabel.setText(name, juce::dontSendNotification);
+        nameLabel.setJustificationType(juce::Justification::centred);
+        nameLabel.setColour(juce::Label::textColourId, pinkui::textWhite);
+        addChildComponent(nameLabel);
 
-        const float gateTarget = (!p.gateEnabled || inputAbs > 0.00398107f) ? 1.0f : 0.0f;
-        const float gateCoeff = gateTarget > gateEnvelope ? gateAttackCoeff : gateReleaseCoeff;
-        gateEnvelope += gateCoeff * (gateTarget - gateEnvelope);
+        valLabel.setJustificationType(juce::Justification::centred);
+        valLabel.setColour(juce::Label::textColourId, pinkui::textWhite);
+        valLabel.setColour(juce::Label::backgroundColourId, pinkui::surfaceDark);
+        valLabel.setColour(juce::Label::outlineColourId, pinkui::borderDark);
+        addChildComponent(valLabel);
+    };
 
-        // 1) Lecture de la boucle de résonance pour chaque canal
-        for (int ch = 0; ch < activeChannels; ++ch)
-        {
-            auto& state = channels[(size_t)ch];
-            state.delayLine.setDelay(delaySamples);
-            float delayed = state.delayLine.popSample(0);
+    setupLfoKnob(lfo1RateSlider, lfo1RateNameLabel, lfo1RateValueLabel, "Rate", 1.0);
+    setupLfoKnob(lfo1PhaseSlider, lfo1PhaseNameLabel, lfo1PhaseValueLabel, "Phase", 0.0);
+    setupLfoKnob(lfo1PwSlider, lfo1PwNameLabel, lfo1PwValueLabel, "PW", 0.5);
+    setupLfoKnob(lfo1SmoothSlider, lfo1SmoothNameLabel, lfo1SmoothValueLabel, "Smooth", 0.0);
 
-            if (inharmCoeff > 0.0005f)
-            {
-                for (int j = 0; j < numAllpassCells; ++j)
-                {
-                    state.inharmAllpass[j].setCoeff(inharmCoeff);
-                    delayed = state.inharmAllpass[j].process(delayed);
-                }
-            }
+    setupLfoKnob(lfo2RateSlider, lfo2RateNameLabel, lfo2RateValueLabel, "Rate", 1.0);
+    setupLfoKnob(lfo2PhaseSlider, lfo2PhaseNameLabel, lfo2PhaseValueLabel, "Phase", 0.0);
+    setupLfoKnob(lfo2PwSlider, lfo2PwNameLabel, lfo2PwValueLabel, "PW", 0.5);
+    setupLfoKnob(lfo2SmoothSlider, lfo2SmoothNameLabel, lfo2SmoothValueLabel, "Smooth", 0.0);
 
-            float loopFiltered = state.loopFilter.process(delayed);
-            loopFiltered = state.dcBlocker.process(loopFiltered);
-            loopOutputs[ch] = loopFiltered;
-        }
+    lfo1SyncAtt   = std::make_unique<ComboAttachment>(processorRef.apvts, Params::lfo1Sync, lfo1SyncBox);
+    lfo1ShapeAtt  = std::make_unique<ComboAttachment>(processorRef.apvts, Params::lfo1Shape, lfo1ShapeBox);
+    lfo1RateAtt   = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo1Rate, lfo1RateSlider);
+    lfo1PhaseAtt  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo1Phase, lfo1PhaseSlider);
+    lfo1PwAtt     = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo1Pw, lfo1PwSlider);
+    lfo1SmoothAtt = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo1Smooth, lfo1SmoothSlider);
 
-        // 2) Excitation, cross-feedback, écriture dans la ligne à retard et mix final
-        for (int ch = 0; ch < activeChannels; ++ch)
-        {
-            auto& state = channels[(size_t)ch];
-            const float dry = channelData[ch][i];
+    lfo2SyncAtt   = std::make_unique<ComboAttachment>(processorRef.apvts, Params::lfo2Sync, lfo2SyncBox);
+    lfo2ShapeAtt  = std::make_unique<ComboAttachment>(processorRef.apvts, Params::lfo2Shape, lfo2ShapeBox);
+    lfo2RateAtt   = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo2Rate, lfo2RateSlider);
+    lfo2PhaseAtt  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo2Phase, lfo2PhaseSlider);
+    lfo2PwAtt     = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo2Pw, lfo2PwSlider);
+    lfo2SmoothAtt = std::make_unique<SliderAttachment>(processorRef.apvts, Params::lfo2Smooth, lfo2SmoothSlider);
 
-            float crossFeedbackSignal = 0.0f;
-            if (activeChannels == 2)
-                crossFeedbackSignal = loopOutputs[1 - ch] * crossFB;
+    polarityAtt = std::make_unique<ComboAttachment>(processorRef.apvts, Params::polarity, polarityBox);
+    gateAtt     = std::make_unique<ButtonAttachment>(processorRef.apvts, Params::gateEnabled, gateButton);
+    gateButton.setButtonText(gateButton.getToggleState() ? "ON" : "OFF");
 
-            float pluckFiltered = dry;
-            if (pluck > 0.001f)
-            {
-                const float pluckDelayTime = juce::jlimit(2.0f, 8184.0f, delaySamples * 0.5f);
-                state.pluckDelay.setDelay(pluckDelayTime);
-                const float pluckDelayed = state.pluckDelay.popSample(0);
-                const float mixAmt = juce::jlimit(0.0f, 1.0f, pluck * 1.2f);
-                pluckFiltered = dry * (1.0f - mixAmt) + (dry - pluckDelayed) * mixAmt;
-                pluckFiltered *= (1.0f + (pluck * 0.5f));
-                state.pluckDelay.pushSample(0, dry);
-            }
+    mainAtts[0]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::pitch, pitchSlider);
+    mainAtts[1]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::feedback, decaySlider);
+    mainAtts[2]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::inputCutoff, inputCutoffSlider);
+    mainAtts[3]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::loopCutoff, loopCutoffSlider);
+    mainAtts[4]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::pluck, pluckSlider);
+    mainAtts[5]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::inharm, inharmSlider);
+    mainAtts[6]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::crossFb, crossFbSlider);
+    mainAtts[7]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::selfMod, selfModSlider);
+    mainAtts[8]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::jitter, jitterSlider);
+    mainAtts[9]  = std::make_unique<SliderAttachment>(processorRef.apvts, Params::dryWet, dryWetSlider);
+    mainAtts[10] = std::make_unique<SliderAttachment>(processorRef.apvts, Params::wetGain, wetGainSlider);
+    mainAtts[11] = std::make_unique<SliderAttachment>(processorRef.apvts, Params::macro, macroSlider);
 
-            const float inputFiltered = state.inputFilter.processSample(0, pluckFiltered);
-            float toWrite = inputFiltered + (loopOutputs[ch] * fb) + crossFeedbackSignal;
-            toWrite = std::tanh(toWrite);
+    setSize(850, 480);
+    startTimerHz(30);
+}
 
-            state.delayLine.pushSample(0, toWrite);
+PinkSwanAudioProcessorEditor::~PinkSwanAudioProcessorEditor()
+{
+    stopTimer();
 
-            float wetSignal = loopOutputs[ch] + crossFeedbackSignal;
-            wetSignal *= currentWetGain * gateEnvelope;
+    for (int i = 0; i < 14; ++i)
+    {
+        m1Sliders[i].setLookAndFeel(nullptr);
+        m2Sliders[i].setLookAndFeel(nullptr);
+    }
+    setLookAndFeel(nullptr);
+}
 
-            channelData[ch][i] = dry * (1.0f - wetMix) + wetSignal * wetMix;
-        }
+void PinkSwanAudioProcessorEditor::timerCallback()
+{
+    const uint32_t rev = processorRef.getStateRevision();
+    if (rev != lastSeenStateRevision)
+    {
+        lastSeenStateRevision = rev;
+        presetBar.syncFromManager();
+    }
+
+    // Alerte visuelle sur CrossFB (uniquement si la couleur change)
+    const float fb = processorRef.apvts.getRawParameterValue(Params::feedback)->load();
+    const float crossFb = processorRef.apvts.getRawParameterValue(Params::crossFb)->load();
+    juce::Colour targetCrossCol = pinkui::neonPink;
+    if (fb > 0.5f && crossFb > 0.3f)
+    {
+        if (crossFb < 0.6f)
+            targetCrossCol = pinkui::neonPink.interpolatedWith(pinkui::dangerRed, (crossFb - 0.3f) / 0.3f);
+        else
+            targetCrossCol = pinkui::dangerRed;
+    }
+    if (targetCrossCol != lastCrossFbColour)
+    {
+        lastCrossFbColour = targetCrossCol;
+        crossFbSlider.setColour(juce::Slider::rotarySliderFillColourId, targetCrossCol);
+        crossFbSlider.repaint();
+    }
+
+    if (!isDrawerOpen)
+        return;
+
+    const float r1 = (float)lfo1RateSlider.getValue();
+    const float p1 = (float)lfo1PhaseSlider.getValue();
+    const float w1 = (float)lfo1PwSlider.getValue();
+    const float s1 = (float)lfo1SmoothSlider.getValue();
+    const int sync1 = lfo1SyncBox.getSelectedItemIndex();
+    const bool byp1 = lfo1BypassButton.getToggleState();
+
+    const float r2 = (float)lfo2RateSlider.getValue();
+    const float p2 = (float)lfo2PhaseSlider.getValue();
+    const float w2 = (float)lfo2PwSlider.getValue();
+    const float s2 = (float)lfo2SmoothSlider.getValue();
+    const int sync2 = lfo2SyncBox.getSelectedItemIndex();
+    const bool byp2 = lfo2BypassButton.getToggleState();
+
+    const auto deg = juce::String::fromUTF8("\u00B0");
+
+    if (forceLfoUiRefresh || r1 != lastLfo1Rate)   { lfo1RateValueLabel.setText(juce::String(r1, 2), juce::dontSendNotification);   lastLfo1Rate = r1; }
+    if (forceLfoUiRefresh || p1 != lastLfo1Phase)  { lfo1PhaseValueLabel.setText(juce::String(p1, 0) + deg, juce::dontSendNotification); lastLfo1Phase = p1; }
+    if (forceLfoUiRefresh || w1 != lastLfo1Pw)     { lfo1PwValueLabel.setText(juce::String(w1, 2), juce::dontSendNotification);     lastLfo1Pw = w1; }
+    if (forceLfoUiRefresh || s1 != lastLfo1Smooth) { lfo1SmoothValueLabel.setText(juce::String(s1, 2), juce::dontSendNotification); lastLfo1Smooth = s1; }
+
+    if (forceLfoUiRefresh || r2 != lastLfo2Rate)   { lfo2RateValueLabel.setText(juce::String(r2, 2), juce::dontSendNotification);   lastLfo2Rate = r2; }
+    if (forceLfoUiRefresh || p2 != lastLfo2Phase)  { lfo2PhaseValueLabel.setText(juce::String(p2, 0) + deg, juce::dontSendNotification); lastLfo2Phase = p2; }
+    if (forceLfoUiRefresh || w2 != lastLfo2Pw)     { lfo2PwValueLabel.setText(juce::String(w2, 2), juce::dontSendNotification);     lastLfo2Pw = w2; }
+    if (forceLfoUiRefresh || s2 != lastLfo2Smooth) { lfo2SmoothValueLabel.setText(juce::String(s2, 2), juce::dontSendNotification); lastLfo2Smooth = s2; }
+
+    if (forceLfoUiRefresh || sync1 != lastLfo1Sync || byp1 != lastLfo1Bypass)
+    {
+        const bool rateActive = (!byp1) && (sync1 == 0);
+        const float rowAlpha = byp1 ? 0.38f : 1.0f;
+        lfo1RateSlider.setEnabled(rateActive);
+        lfo1RateSlider.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo1RateNameLabel.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo1RateValueLabel.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo1SyncBox.setAlpha(rowAlpha);
+        lfo1ShapeBox.setAlpha(rowAlpha);
+        lfo1PhaseSlider.setAlpha(rowAlpha);
+        lfo1PwSlider.setAlpha(rowAlpha);
+        lfo1SmoothSlider.setAlpha(rowAlpha);
+        lastLfo1Sync = sync1;
+        lastLfo1Bypass = byp1;
+    }
+
+    if (forceLfoUiRefresh || sync2 != lastLfo2Sync || byp2 != lastLfo2Bypass)
+    {
+        const bool rateActive = (!byp2) && (sync2 == 0);
+        const float rowAlpha = byp2 ? 0.38f : 1.0f;
+        lfo2RateSlider.setEnabled(rateActive);
+        lfo2RateSlider.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo2RateNameLabel.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo2RateValueLabel.setAlpha(rateActive ? 1.0f : 0.35f);
+        lfo2SyncBox.setAlpha(rowAlpha);
+        lfo2ShapeBox.setAlpha(rowAlpha);
+        lfo2PhaseSlider.setAlpha(rowAlpha);
+        lfo2PwSlider.setAlpha(rowAlpha);
+        lfo2SmoothSlider.setAlpha(rowAlpha);
+        lastLfo2Sync = sync2;
+        lastLfo2Bypass = byp2;
+    }
+
+    forceLfoUiRefresh = false;
+}
+
+void PinkSwanAudioProcessorEditor::paint(juce::Graphics& g)
+{
+    g.fillAll(pinkui::bgBlack);
+
+    // En-tête : "PinkSwan" en un seul mot à gauche, PresetBar à droite
+    auto header = getLocalBounds().reduced(10, 8).removeFromTop(32);
+    auto titleArea = header.removeFromLeft(155);
+    g.setColour(pinkui::textWhite);
+    g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+    g.drawFittedText("Pink", titleArea.withWidth(56), juce::Justification::centredLeft, 1);
+    g.setColour(pinkui::neonPink);
+    g.drawFittedText("Swan", titleArea.withTrimmedLeft(54), juce::Justification::centredLeft, 1);
+
+    // Ligne séparatrice sous le header
+    g.setColour(pinkui::borderDark);
+    g.drawHorizontalLine(46, 10.0f, (float)(getWidth() - 10));
+
+    auto area = getLocalBounds().reduced(10);
+    area.removeFromTop(40);
+    if (isDrawerOpen)
+        area.removeFromBottom(350);
+    area.removeFromBottom(30);
+
+    auto leftArea = area.removeFromLeft(150);
+    g.setColour(pinkui::borderDark);
+    g.drawVerticalLine(leftArea.getRight() + 10, (float)area.getY() + 4.0f, (float)area.getBottom() - 4.0f);
+
+    area.removeFromLeft(20);
+    const float colWidth = area.getWidth() / 4.0f;
+    g.drawVerticalLine((int)(area.getX() + colWidth),     (float)area.getY() + 4.0f, (float)area.getBottom() - 4.0f);
+    g.drawVerticalLine((int)(area.getX() + colWidth * 2), (float)area.getY() + 4.0f, (float)area.getBottom() - 4.0f);
+    g.drawVerticalLine((int)(area.getX() + colWidth * 3), (float)area.getY() + 4.0f, (float)area.getBottom() - 4.0f);
+
+    if (isDrawerOpen)
+    {
+        g.setColour(pinkui::borderDark);
+        g.drawHorizontalLine(getHeight() - 355, 10.0f, (float)(getWidth() - 10));
     }
 }
 
-float Resonator::semitonesToDelaySamples(float semitones, double sr) const noexcept
+void PinkSwanAudioProcessorEditor::resized()
 {
-    const float freq = baseFreqHz * std::pow(2.0f, semitones / 12.0f);
-    const float delay = (float)(sr / freq);
-    return juce::jlimit(4.0f, maxDelaySamples - 8.0f, delay);
+    auto full = getLocalBounds();
+
+    // Header : titre "PinkSwan" à gauche (165 px), PresetBar à droite
+    auto header = full.reduced(10, 8).removeFromTop(30);
+    header.removeFromLeft(170);
+    presetBar.setBounds(header);
+
+    auto area = full.reduced(10);
+    area.removeFromTop(42);
+    if (isDrawerOpen)
+        area.removeFromBottom(350);
+
+    drawerButton.setBounds(full.removeFromBottom(26).reduced(10, 2));
+    area.removeFromBottom(30);
+
+    // Colonne de gauche : MACRO + Polarity + Gate (-48 dB)
+    auto leftArea = area.removeFromLeft(150).reduced(10, 6);
+    macroLabel.setBounds(leftArea.removeFromTop(24));
+    macroSlider.setBounds(leftArea.removeFromTop(125));
+    leftArea.removeFromTop(14);
+    polarityLabel.setBounds(leftArea.removeFromTop(20));
+    polarityBox.setBounds(leftArea.removeFromTop(28));
+    leftArea.removeFromTop(14);
+    gateLabel.setBounds(leftArea.removeFromTop(20));
+    gateButton.setBounds(leftArea.removeFromTop(28).reduced(18, 0));
+
+    area.removeFromLeft(20);
+    const int cols = 4;
+    const int colWidth = area.getWidth() / cols;
+    const int rowHeight = area.getHeight() / 3;
+
+    auto place = [&](juce::Slider& s, juce::Label& l, int col, int row) {
+        juce::Rectangle<int> cell(area.getX() + col * colWidth, area.getY() + row * rowHeight, colWidth, rowHeight);
+        cell = cell.reduced(10, 6);
+        l.setBounds(cell.removeFromTop(20));
+        s.setBounds(cell);
+    };
+
+    place(inputCutoffSlider, inputCutoffLabel, 0, 0);
+    place(loopCutoffSlider, loopCutoffLabel, 0, 1);
+    place(pitchSlider, pitchLabel, 0, 2);
+
+    place(pluckSlider, pluckLabel, 1, 0);
+    place(inharmSlider, inharmLabel, 1, 1);
+
+    // Cadre central bas : icône Cygne 3/4 avant gauche (bouton Panic)
+    juce::Rectangle<int> swanCell(area.getX() + 1 * colWidth, area.getY() + 2 * rowHeight, colWidth, rowHeight);
+    swanCell = swanCell.reduced(10);
+    const int swanSize = juce::jmin(swanCell.getWidth(), swanCell.getHeight()) - 8;
+    swanPanicButton.setBounds(swanCell.withSizeKeepingCentre(swanSize, swanSize));
+
+    place(decaySlider, decayLabel, 2, 0);
+    place(crossFbSlider, crossFbLabel, 2, 1);
+    place(selfModSlider, selfModLabel, 2, 2);
+
+    place(dryWetSlider, dryWetLabel, 3, 0);
+    place(wetGainSlider, wetGainLabel, 3, 1);
+    place(jitterSlider, jitterLabel, 3, 2);
+
+    drawerButton.setButtonText(isDrawerOpen ? "MODULATION  -" : "MODULATION  +");
+
+    if (isDrawerOpen)
+    {
+        auto drawerArea = full.removeFromBottom(348).reduced(10, 6);
+        drawerArea.removeFromBottom(24);
+
+        auto topDrawerRow = drawerArea.removeFromTop(20);
+        matrixReadoutLabel.setBounds(topDrawerRow);
+        matrixReadoutLabel.setVisible(true);
+
+        auto matrixArea = drawerArea.removeFromTop(108);
+        const int mCols = 14;
+
+        auto labelArea = matrixArea.removeFromLeft(44);
+        lfo1BypassButton.setBounds(labelArea.getX(), matrixArea.getY() + 2, 38, 50);
+        lfo1BypassButton.setVisible(true);
+        lfo2BypassButton.setBounds(labelArea.getX(), matrixArea.getY() + 56, 38, 50);
+        lfo2BypassButton.setVisible(true);
+
+        const int mWidth = matrixArea.getWidth() / mCols;
+        const int mRowHeight = matrixArea.getHeight() / 2;
+
+        for (int i = 0; i < mCols; ++i)
+        {
+            matrixLabels[i].setBounds(matrixArea.getX() + i * mWidth, topDrawerRow.getY(), mWidth, 20);
+            matrixLabels[i].setVisible(true);
+        }
+
+        matrixReadoutLabel.setBounds(full.getWidth() - 250, topDrawerRow.getY() - 20, 240, 18);
+
+        for (int i = 0; i < 12; ++i)
+        {
+            m1Sliders[i].setBounds(matrixArea.getX() + i * mWidth, matrixArea.getY(), mWidth, mRowHeight);
+            m1Sliders[i].setVisible(true);
+            m2Sliders[i].setBounds(matrixArea.getX() + i * mWidth, matrixArea.getY() + mRowHeight, mWidth, mRowHeight);
+            m2Sliders[i].setVisible(true);
+        }
+
+        m1Sliders[12].setVisible(false);
+        m1Sliders[13].setBounds(matrixArea.getX() + 13 * mWidth, matrixArea.getY(), mWidth, mRowHeight);
+        m1Sliders[13].setVisible(true);
+
+        m2Sliders[12].setBounds(matrixArea.getX() + 12 * mWidth, matrixArea.getY() + mRowHeight, mWidth, mRowHeight);
+        m2Sliders[12].setVisible(true);
+        m2Sliders[13].setVisible(false);
+
+        drawerArea.removeFromTop(14);
+
+        auto layoutLfoRow = [&](juce::Rectangle<int> row,
+                                juce::Label& rowLabel,
+                                CustomComboBox& syncBox, CustomComboBox& shapeBox,
+                                juce::Slider& rateS, juce::Label& rateNL, juce::Label& rateVL,
+                                juce::Slider& phaseS, juce::Label& phaseNL, juce::Label& phaseVL,
+                                juce::Slider& pwS, juce::Label& pwNL, juce::Label& pwVL,
+                                juce::Slider& smS, juce::Label& smNL, juce::Label& smVL)
+        {
+            auto titleCol = row.removeFromLeft(56);
+            rowLabel.setBounds(titleCol.getX(), titleCol.getY() + 30, 52, 22);
+            rowLabel.setVisible(true);
+
+            syncBox.setBounds(row.removeFromLeft(110).reduced(4, 26));
+            syncBox.setVisible(true);
+            shapeBox.setBounds(row.removeFromLeft(110).reduced(4, 26));
+            shapeBox.setVisible(true);
+
+            auto placeLfoKnob = [&](juce::Slider& s, juce::Label& nl, juce::Label& vl) {
+                auto box = row.removeFromLeft(130).reduced(6, 0);
+                auto left = box.removeFromLeft(52);
+                nl.setBounds(left.removeFromTop(24)); nl.setVisible(true);
+                vl.setBounds(left.removeFromTop(22).reduced(0, 2)); vl.setVisible(true);
+                s.setBounds(box); s.setVisible(true);
+            };
+
+            placeLfoKnob(rateS, rateNL, rateVL);
+            placeLfoKnob(phaseS, phaseNL, phaseVL);
+            placeLfoKnob(pwS, pwNL, pwVL);
+            placeLfoKnob(smS, smNL, smVL);
+        };
+
+        layoutLfoRow(drawerArea.removeFromTop(88), lfo1RowLabel, lfo1SyncBox, lfo1ShapeBox,
+                     lfo1RateSlider, lfo1RateNameLabel, lfo1RateValueLabel,
+                     lfo1PhaseSlider, lfo1PhaseNameLabel, lfo1PhaseValueLabel,
+                     lfo1PwSlider, lfo1PwNameLabel, lfo1PwValueLabel,
+                     lfo1SmoothSlider, lfo1SmoothNameLabel, lfo1SmoothValueLabel);
+
+        drawerArea.removeFromTop(6);
+
+        layoutLfoRow(drawerArea.removeFromTop(88), lfo2RowLabel, lfo2SyncBox, lfo2ShapeBox,
+                     lfo2RateSlider, lfo2RateNameLabel, lfo2RateValueLabel,
+                     lfo2PhaseSlider, lfo2PhaseNameLabel, lfo2PhaseValueLabel,
+                     lfo2PwSlider, lfo2PwNameLabel, lfo2PwValueLabel,
+                     lfo2SmoothSlider, lfo2SmoothNameLabel, lfo2SmoothValueLabel);
+    }
+    else
+    {
+        matrixReadoutLabel.setVisible(false);
+        for (int i = 0; i < 14; ++i)
+        {
+            matrixLabels[i].setVisible(false);
+            m1Sliders[i].setVisible(false);
+            m2Sliders[i].setVisible(false);
+        }
+
+        lfo1BypassButton.setVisible(false);
+        lfo2BypassButton.setVisible(false);
+        lfo1RowLabel.setVisible(false);
+        lfo2RowLabel.setVisible(false);
+
+        lfo1SyncBox.setVisible(false);  lfo1ShapeBox.setVisible(false);
+        lfo1RateSlider.setVisible(false);  lfo1RateNameLabel.setVisible(false);  lfo1RateValueLabel.setVisible(false);
+        lfo1PhaseSlider.setVisible(false); lfo1PhaseNameLabel.setVisible(false); lfo1PhaseValueLabel.setVisible(false);
+        lfo1PwSlider.setVisible(false);    lfo1PwNameLabel.setVisible(false);    lfo1PwValueLabel.setVisible(false);
+        lfo1SmoothSlider.setVisible(false);lfo1SmoothNameLabel.setVisible(false);lfo1SmoothValueLabel.setVisible(false);
+
+        lfo2SyncBox.setVisible(false);  lfo2ShapeBox.setVisible(false);
+        lfo2RateSlider.setVisible(false);  lfo2RateNameLabel.setVisible(false);  lfo2RateValueLabel.setVisible(false);
+        lfo2PhaseSlider.setVisible(false); lfo2PhaseNameLabel.setVisible(false); lfo2PhaseValueLabel.setVisible(false);
+        lfo2PwSlider.setVisible(false);    lfo2PwNameLabel.setVisible(false);    lfo2PwValueLabel.setVisible(false);
+        lfo2SmoothSlider.setVisible(false);lfo2SmoothNameLabel.setVisible(false);lfo2SmoothValueLabel.setVisible(false);
+    }
 }
