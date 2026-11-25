@@ -48,7 +48,7 @@ public:
     }
 };
 
-// Bouton Panic / Kill Tail avec silhouette minimaliste monochrome d'un cygne en vue de 3/4 avant
+// Bouton Panic / Kill Tail : cygne monochrome Stealth / Origami en vue de 3/4 avant
 class SwanPanicButton : public juce::Button, private juce::Timer
 {
 public:
@@ -79,84 +79,88 @@ protected:
         auto bounds = getLocalBounds().toFloat().reduced(2.0f);
         const float side = juce::jmin(bounds.getWidth(), bounds.getHeight());
         auto frame = bounds.withSizeKeepingCentre(side, side);
+        constexpr float corner = 4.0f;
 
         // Fond noir + flash éventuel lors du clic Panic
         g.setColour(pinkui::bgBlack);
-        g.fillRoundedRectangle(frame, 8.0f);
+        g.fillRoundedRectangle(frame, corner);
 
         if (flashAlpha > 0.01f)
         {
-            g.setColour(pinkui::neonPink.withAlpha(flashAlpha * 0.35f));
-            g.fillRoundedRectangle(frame, 8.0f);
+            g.setColour(pinkui::neonPink.withAlpha(flashAlpha * 0.38f));
+            g.fillRoundedRectangle(frame, corner);
         }
         else if (shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown)
         {
             g.setColour(pinkui::textWhite.withAlpha(shouldDrawButtonAsDown ? 0.14f : 0.06f));
-            g.fillRoundedRectangle(frame, 8.0f);
+            g.fillRoundedRectangle(frame, corner);
         }
 
-        // Cadre rose néon
+        // Cadre rose néon net
         const auto borderCol = flashAlpha > 0.01f
             ? pinkui::neonPink.interpolatedWith(pinkui::textWhite, flashAlpha)
             : (shouldDrawButtonAsHighlighted ? pinkui::softPink : pinkui::neonPink);
         g.setColour(borderCol);
-        g.drawRoundedRectangle(frame, 8.0f, 1.8f);
+        g.drawRoundedRectangle(frame, corner, 1.8f);
 
-        // Dessin vectoriel minimaliste monochrome du cygne en vue 3/4 avant
+        // Géométrie Stealth / Origami en vue 3/4 avant
         const auto c = frame.getCentre();
-        const float s = side * 0.34f;
+        const float s = side * 0.41f;
+        const float cy = c.y + 0.05f * s;
         const auto swanCol = flashAlpha > 0.01f
             ? pinkui::textWhite.interpolatedWith(pinkui::softPink, flashAlpha * 0.5f)
             : pinkui::textWhite;
 
-        // Silhouette corps + cou en S + tête tournée 3/4 avant vers la gauche
+        auto pt = [&](float nx, float ny) -> juce::Point<float> {
+            return { c.x + nx * s, cy + ny * s };
+        };
+
         juce::Path swan;
-        swan.startNewSubPath(c.x - 0.12f * s, c.y + 0.22f * s);
-        // Montée du cou (côté arrière) vers la nuque
-        swan.cubicTo(c.x + 0.08f * s, c.y - 0.05f * s,
-                     c.x + 0.12f * s, c.y - 0.58f * s,
-                     c.x - 0.12f * s, c.y - 0.68f * s);
-        // Sommet de la tête -> bec pointant 3/4 avant-gauche
-        swan.cubicTo(c.x - 0.26f * s, c.y - 0.72f * s,
-                     c.x - 0.38f * s, c.y - 0.56f * s,
-                     c.x - 0.54f * s, c.y - 0.42f * s);
-        // Dessous du bec -> gorge
-        swan.cubicTo(c.x - 0.40f * s, c.y - 0.38f * s,
-                     c.x - 0.30f * s, c.y - 0.44f * s,
-                     c.x - 0.22f * s, c.y - 0.38f * s);
-        // Courbe intérieure du cou descendant vers le poitrail bombé (3/4 face)
-        swan.cubicTo(c.x - 0.12f * s, c.y - 0.20f * s,
-                     c.x - 0.54f * s, c.y + 0.04f * s,
-                     c.x - 0.48f * s, c.y + 0.36f * s);
-        // Base du poitrail sur l'eau vers la queue à droite
-        swan.cubicTo(c.x - 0.34f * s, c.y + 0.58f * s,
-                     c.x + 0.28f * s, c.y + 0.56f * s,
-                     c.x + 0.74f * s, c.y + 0.20f * s);
-        // Aile droite relevée (perspective 3/4 avant) rejoignant la base du cou
-        swan.cubicTo(c.x + 0.48f * s, c.y + 0.04f * s,
-                     c.x + 0.24f * s, c.y - 0.02f * s,
-                     c.x - 0.12f * s, c.y + 0.22f * s);
+        swan.startNewSubPath(pt(-0.14f, -0.74f)); // Sommet du crâne
+        swan.lineTo(pt(-0.36f, -0.62f));          // Arcade tendue
+        swan.lineTo(pt(-0.68f, -0.36f));          // Pointe du bec poignard
+        swan.lineTo(pt(-0.34f, -0.44f));          // Entaille sous le bec
+        swan.lineTo(pt(-0.20f, -0.38f));          // Gorge
+        swan.lineTo(pt(-0.12f, -0.16f));          // Pli intérieur du cou en Z
+        swan.lineTo(pt(-0.54f,  0.16f));          // Proue anguleuse du poitrail
+        swan.lineTo(pt(-0.38f,  0.48f));          // Base avant sur l'eau
+        swan.lineTo(pt( 0.24f,  0.48f));          // Ligne de quille
+        swan.lineTo(pt( 0.80f,  0.16f));          // Pointe de queue arrière
+        swan.lineTo(pt( 0.50f, -0.20f));          // Pointe haute de l'aile furtive
+        swan.lineTo(pt( 0.08f,  0.08f));          // Creux de l'aile
+        swan.lineTo(pt( 0.12f, -0.52f));          // Arête arrière tendue du cou
         swan.closeSubPath();
 
         g.setColour(swanCol);
         g.fillPath(swan);
 
-        // Ligne d'aile intérieure minimaliste (découpe négative)
-        juce::Path wingLine;
-        wingLine.startNewSubPath(c.x - 0.08f * s, c.y + 0.32f * s);
-        wingLine.quadraticTo(c.x + 0.20f * s, c.y + 0.12f * s,
-                             c.x + 0.54f * s, c.y + 0.22f * s);
-        g.setColour(pinkui::bgBlack);
-        g.strokePath(wingLine, juce::PathStrokeType(juce::jmax(1.4f, side * 0.024f),
-                                                    juce::PathStrokeType::curved,
-                                                    juce::PathStrokeType::rounded));
+        // Découpes négatives tranchantes (arête de poitrail + 2 lames parallèles d'aile)
+        const float cutWidth = juce::jmax(1.5f, side * 0.028f);
+        const juce::PathStrokeType sharpStroke(cutWidth, juce::PathStrokeType::mitered, juce::PathStrokeType::butt);
 
-        // Ligne d'eau minimaliste sous le cygne
+        juce::Path wingCuts;
+        wingCuts.startNewSubPath(pt(-0.54f, 0.16f));
+        wingCuts.lineTo(pt(-0.02f, 0.24f));
+        wingCuts.lineTo(pt( 0.58f, -0.06f));
+
+        wingCuts.startNewSubPath(pt( 0.06f, 0.38f));
+        wingCuts.lineTo(pt( 0.74f, 0.06f));
+
+        // Fente d'œil diagonale pour le regard agressif
+        wingCuts.startNewSubPath(pt(-0.32f, -0.57f));
+        wingCuts.lineTo(pt(-0.15f, -0.53f));
+
+        g.setColour(pinkui::bgBlack);
+        g.strokePath(wingCuts, sharpStroke);
+
+        // Ligne d'eau brisée en V sous la silhouette
         juce::Path water;
-        water.startNewSubPath(c.x - 0.66f * s, c.y + 0.64f * s);
-        water.quadraticTo(c.x, c.y + 0.69f * s, c.x + 0.68f * s, c.y + 0.64f * s);
-        g.setColour(swanCol.withAlpha(0.55f));
-        g.strokePath(water, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        water.startNewSubPath(pt(-0.72f, 0.57f));
+        water.lineTo(pt(-0.38f, 0.63f));
+        water.lineTo(pt( 0.76f, 0.57f));
+
+        g.setColour(swanCol.withAlpha(0.65f));
+        g.strokePath(water, juce::PathStrokeType(1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
     }
 
 private:
