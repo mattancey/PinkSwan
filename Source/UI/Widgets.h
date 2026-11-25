@@ -48,7 +48,7 @@ public:
     }
 };
 
-// Bouton Panic / Kill Tail : cygne monochrome Stealth / Origami en vue de 3/4 avant
+// Bouton Panic / Kill Tail : cygne facetté Stealth / Low-Poly en vue 3/4 avant gauche
 class SwanPanicButton : public juce::Button, private juce::Timer
 {
 public:
@@ -81,7 +81,6 @@ protected:
         auto frame = bounds.withSizeKeepingCentre(side, side);
         constexpr float corner = 4.0f;
 
-        // Fond noir + flash éventuel lors du clic Panic
         g.setColour(pinkui::bgBlack);
         g.fillRoundedRectangle(frame, corner);
 
@@ -96,71 +95,137 @@ protected:
             g.fillRoundedRectangle(frame, corner);
         }
 
-        // Cadre rose néon net
         const auto borderCol = flashAlpha > 0.01f
             ? pinkui::neonPink.interpolatedWith(pinkui::textWhite, flashAlpha)
             : (shouldDrawButtonAsHighlighted ? pinkui::softPink : pinkui::neonPink);
         g.setColour(borderCol);
         g.drawRoundedRectangle(frame, corner, 1.8f);
 
-        // Géométrie Stealth / Origami en vue 3/4 avant
         const auto c = frame.getCentre();
-        const float s = side * 0.41f;
-        const float cy = c.y + 0.05f * s;
-        const auto swanCol = flashAlpha > 0.01f
-            ? pinkui::textWhite.interpolatedWith(pinkui::softPink, flashAlpha * 0.5f)
-            : pinkui::textWhite;
+        const float s = side * 0.43f;
+        const float grooveW = juce::jmax(1.0f, side * 0.016f);
+        const float detailW = juce::jmax(0.8f, side * 0.012f);
+        const juce::PathStrokeType grooveStroke(grooveW, juce::PathStrokeType::mitered, juce::PathStrokeType::butt);
+        const juce::PathStrokeType detailStroke(detailW, juce::PathStrokeType::mitered, juce::PathStrokeType::butt);
 
         auto pt = [&](float nx, float ny) -> juce::Point<float> {
-            return { c.x + nx * s, cy + ny * s };
+            return { c.x + nx * s, c.y + ny * s };
         };
 
-        juce::Path swan;
-        swan.startNewSubPath(pt(-0.14f, -0.74f)); // Sommet du crâne
-        swan.lineTo(pt(-0.36f, -0.62f));          // Arcade tendue
-        swan.lineTo(pt(-0.68f, -0.36f));          // Pointe du bec poignard
-        swan.lineTo(pt(-0.34f, -0.44f));          // Entaille sous le bec
-        swan.lineTo(pt(-0.20f, -0.38f));          // Gorge
-        swan.lineTo(pt(-0.12f, -0.16f));          // Pli intérieur du cou en Z
-        swan.lineTo(pt(-0.54f,  0.16f));          // Proue anguleuse du poitrail
-        swan.lineTo(pt(-0.38f,  0.48f));          // Base avant sur l'eau
-        swan.lineTo(pt( 0.24f,  0.48f));          // Ligne de quille
-        swan.lineTo(pt( 0.80f,  0.16f));          // Pointe de queue arrière
-        swan.lineTo(pt( 0.50f, -0.20f));          // Pointe haute de l'aile furtive
-        swan.lineTo(pt( 0.08f,  0.08f));          // Creux de l'aile
-        swan.lineTo(pt( 0.12f, -0.52f));          // Arête arrière tendue du cou
-        swan.closeSubPath();
+        auto shade = [&](juce::Colour base) -> juce::Colour {
+            return flashAlpha > 0.01f ? base.interpolatedWith(pinkui::softPink, flashAlpha * 0.45f) : base;
+        };
 
-        g.setColour(swanCol);
-        g.fillPath(swan);
+        auto drawFacet = [&](std::initializer_list<juce::Point<float>> pts, juce::Colour fillCol) {
+            juce::Path p;
+            bool first = true;
+            for (const auto& v : pts)
+            {
+                if (first) { p.startNewSubPath(v); first = false; }
+                else       { p.lineTo(v); }
+            }
+            p.closeSubPath();
+            g.setColour(shade(fillCol));
+            g.fillPath(p);
+            g.setColour(pinkui::bgBlack);
+            g.strokePath(p, grooveStroke);
+        };
 
-        // Découpes négatives tranchantes (arête de poitrail + 2 lames parallèles d'aile)
-        const float cutWidth = juce::jmax(1.5f, side * 0.028f);
-        const juce::PathStrokeType sharpStroke(cutWidth, juce::PathStrokeType::mitered, juce::PathStrokeType::butt);
+        auto drawLine = [&](juce::Point<float> a, juce::Point<float> b, juce::Colour col, const juce::PathStrokeType& st) {
+            juce::Path p;
+            p.startNewSubPath(a);
+            p.lineTo(b);
+            g.setColour(col);
+            g.strokePath(p, st);
+        };
 
-        juce::Path wingCuts;
-        wingCuts.startNewSubPath(pt(-0.54f, 0.16f));
-        wingCuts.lineTo(pt(-0.02f, 0.24f));
-        wingCuts.lineTo(pt( 0.58f, -0.06f));
+        const juce::Colour cBright  { 0xFFF4F4F8 };
+        const juce::Colour cLight   { 0xFFE2E2EC };
+        const juce::Colour cSilver  { 0xFFC0C0CE };
+        const juce::Colour cMid     { 0xFF9C9CAC };
+        const juce::Colour cSlate   { 0xFF787888 };
+        const juce::Colour cShadow  { 0xFF525260 };
 
-        wingCuts.startNewSubPath(pt( 0.06f, 0.38f));
-        wingCuts.lineTo(pt( 0.74f, 0.06f));
+        // 1. Aile arrière gauche (perspective 3/4 avant gauche)
+        drawFacet({ pt(-0.22f, 0.04f), pt(-0.44f, -0.10f), pt(-0.62f, -0.14f), pt(-0.50f, -0.02f),
+                    pt(-0.70f, 0.02f), pt(-0.54f,  0.10f), pt(-0.68f,  0.16f), pt(-0.48f,  0.22f), pt(-0.28f, 0.14f) },
+                  cShadow);
+        drawLine(pt(-0.28f, 0.10f), pt(-0.62f, -0.14f), shade(cSilver), detailStroke);
+        drawLine(pt(-0.32f, 0.14f), pt(-0.70f,  0.02f), shade(cSilver), detailStroke);
+        drawLine(pt(-0.34f, 0.18f), pt(-0.68f,  0.16f), shade(cSilver), detailStroke);
 
-        // Fente d'œil diagonale pour le regard agressif
-        wingCuts.startNewSubPath(pt(-0.32f, -0.57f));
-        wingCuts.lineTo(pt(-0.15f, -0.53f));
+        // 2. Aile principale droite (lames géométriques superposées)
+        drawFacet({ pt( 0.00f, 0.06f), pt(0.22f, -0.08f), pt(0.52f, -0.32f), pt(0.34f, 0.04f), pt(0.14f, 0.20f) }, cBright);
+        drawFacet({ pt( 0.52f,-0.32f), pt(0.78f, -0.26f), pt(0.54f, -0.14f), pt(0.34f, 0.04f) }, cSilver);
+        drawFacet({ pt( 0.34f, 0.04f), pt(0.54f, -0.14f), pt(0.82f, -0.06f), pt(0.56f, 0.02f), pt(0.30f, 0.18f) }, cBright);
+        drawFacet({ pt( 0.30f, 0.18f), pt(0.56f,  0.02f), pt(0.78f,  0.14f), pt(0.52f, 0.18f), pt(0.24f, 0.30f) }, cMid);
+        drawFacet({ pt( 0.24f, 0.30f), pt(0.52f,  0.18f), pt(0.68f,  0.32f), pt(0.44f, 0.32f), pt(0.16f, 0.42f) }, cLight);
+        drawFacet({ pt( 0.16f, 0.42f), pt(0.44f,  0.32f), pt(0.58f,  0.48f), pt(0.26f, 0.58f), pt(-0.02f, 0.62f) }, cSlate);
+        drawFacet({ pt( 0.00f, 0.06f), pt(0.14f,  0.20f), pt(0.24f,  0.30f), pt(0.16f, 0.42f), pt(-0.02f, 0.62f), pt(-0.06f, 0.34f) }, cMid);
 
+        drawLine(pt(0.22f, -0.08f), pt( 0.34f,  0.04f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(0.34f,  0.04f), pt( 0.78f, -0.26f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(0.34f,  0.04f), pt( 0.82f, -0.06f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(0.30f,  0.18f), pt( 0.78f,  0.14f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(0.24f,  0.30f), pt( 0.68f,  0.32f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(0.14f,  0.20f), pt(-0.06f,  0.34f), pinkui::bgBlack, detailStroke);
+
+        // 3. Poitrail en proue (3/4 avant gauche)
+        drawFacet({ pt( 0.00f, 0.06f), pt(-0.15f, 0.08f), pt(-0.34f, 0.30f), pt(-0.06f, 0.34f) }, cMid);
+        drawFacet({ pt(-0.06f, 0.34f), pt(-0.34f, 0.30f), pt(-0.32f, 0.58f), pt(-0.20f, 0.66f), pt(-0.02f, 0.62f) }, cSlate);
+        drawFacet({ pt(-0.15f, 0.08f), pt(-0.28f, 0.12f), pt(-0.52f, 0.24f), pt(-0.34f, 0.30f) }, cBright);
+        drawFacet({ pt(-0.34f, 0.30f), pt(-0.52f, 0.24f), pt(-0.58f, 0.44f), pt(-0.32f, 0.58f) }, cLight);
+        drawFacet({ pt(-0.32f, 0.58f), pt(-0.58f, 0.44f), pt(-0.42f, 0.62f), pt(-0.20f, 0.66f) }, cSilver);
+
+        // 4. Cou en tension facetté
+        drawFacet({ pt( 0.08f, -0.58f), pt(-0.05f, -0.54f), pt( 0.02f, -0.32f), pt( 0.14f, -0.36f) }, cSlate);
+        drawFacet({ pt( 0.14f, -0.36f), pt( 0.02f, -0.32f), pt(-0.01f, -0.10f), pt( 0.12f, -0.14f) }, cSlate);
+        drawFacet({ pt( 0.12f, -0.14f), pt(-0.01f, -0.10f), pt(-0.15f,  0.08f), pt( 0.00f,  0.06f) }, cMid);
+        drawFacet({ pt(-0.05f, -0.54f), pt(-0.18f, -0.46f), pt(-0.08f, -0.26f), pt( 0.02f, -0.32f) }, cBright);
+        drawFacet({ pt( 0.02f, -0.32f), pt(-0.08f, -0.26f), pt(-0.12f, -0.04f), pt(-0.01f, -0.10f) }, cLight);
+        drawFacet({ pt(-0.01f, -0.10f), pt(-0.12f, -0.04f), pt(-0.28f,  0.12f), pt(-0.15f,  0.08f) }, cBright);
+
+        drawLine(pt( 0.08f, -0.58f), pt( 0.02f, -0.32f), pinkui::bgBlack, detailStroke);
+        drawLine(pt( 0.02f, -0.32f), pt(-0.18f, -0.46f), pinkui::bgBlack, detailStroke);
+        drawLine(pt( 0.14f, -0.36f), pt(-0.01f, -0.10f), pinkui::bgBlack, detailStroke);
+        drawLine(pt(-0.01f, -0.10f), pt(-0.08f, -0.26f), pinkui::bgBlack, detailStroke);
+        drawLine(pt( 0.12f, -0.14f), pt(-0.15f,  0.08f), pinkui::bgBlack, detailStroke);
+
+        // 5. Tête & bec poignard (tournés vers la gauche)
+        drawFacet({ pt( 0.08f, -0.58f), pt( 0.00f, -0.72f), pt(-0.14f, -0.78f), pt(-0.28f, -0.62f), pt(-0.18f, -0.46f), pt(-0.05f, -0.54f) }, cMid);
+        drawFacet({ pt(-0.14f, -0.78f), pt(-0.28f, -0.72f), pt(-0.40f, -0.60f), pt(-0.28f, -0.62f) }, cBright);
+        drawFacet({ pt(-0.28f, -0.62f), pt(-0.40f, -0.60f), pt(-0.44f, -0.48f), pt(-0.36f, -0.44f), pt(-0.18f, -0.46f) }, cLight);
+        drawFacet({ pt(-0.40f, -0.60f), pt(-0.62f, -0.44f), pt(-0.74f, -0.30f), pt(-0.44f, -0.48f) }, cMid);
+        drawFacet({ pt(-0.44f, -0.48f), pt(-0.74f, -0.30f), pt(-0.46f, -0.38f), pt(-0.36f, -0.44f) }, cShadow);
+
+        // Œil anguleux
+        juce::Path eye;
+        eye.startNewSubPath(pt(-0.29f, -0.58f));
+        eye.lineTo(pt(-0.40f, -0.56f));
+        eye.lineTo(pt(-0.36f, -0.51f));
+        eye.lineTo(pt(-0.27f, -0.54f));
+        eye.closeSubPath();
         g.setColour(pinkui::bgBlack);
-        g.strokePath(wingCuts, sharpStroke);
+        g.fillPath(eye);
 
-        // Ligne d'eau brisée en V sous la silhouette
-        juce::Path water;
-        water.startNewSubPath(pt(-0.72f, 0.57f));
-        water.lineTo(pt(-0.38f, 0.63f));
-        water.lineTo(pt( 0.76f, 0.57f));
+        // 6. Sillage anguleux sur l'eau
+        juce::Path wake1;
+        wake1.startNewSubPath(pt( 0.76f, 0.66f));
+        wake1.lineTo(pt( 0.18f, 0.66f));
+        wake1.lineTo(pt(-0.20f, 0.72f));
+        wake1.lineTo(pt(-0.68f, 0.66f));
+        wake1.lineTo(pt(-0.84f, 0.62f));
+        g.setColour(shade(cBright));
+        g.strokePath(wake1, grooveStroke);
 
-        g.setColour(swanCol.withAlpha(0.65f));
-        g.strokePath(water, juce::PathStrokeType(1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
+        juce::Path wake2;
+        wake2.startNewSubPath(pt( 0.62f, 0.75f));
+        wake2.lineTo(pt(-0.16f, 0.79f));
+        wake2.lineTo(pt(-0.60f, 0.73f));
+        g.setColour(shade(cMid));
+        g.strokePath(wake2, detailStroke);
+
+        drawLine(pt(0.32f, 0.84f), pt(-0.36f, 0.84f), shade(cShadow), detailStroke);
     }
 
 private:
