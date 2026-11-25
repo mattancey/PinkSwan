@@ -140,24 +140,10 @@ PinkSwanAudioProcessorEditor::PinkSwanAudioProcessorEditor(PinkSwanAudioProcesso
     lfo2RowLabel.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
     addChildComponent(lfo2RowLabel);
 
-    const juce::StringArray syncs = {
-        "Free", "4 bars", "2 bars", "1 bar",
-        "1/1", "1/1 T", "1/1 D",
-        "1/2", "1/2 T", "1/2 D",
-        "1/4", "1/4 T", "1/4 D",
-        "1/8", "1/8 T", "1/8 D",
-        "1/16", "1/16 T", "1/16 D",
-        "5/4", "6/4", "7/4", "9/4", "18/4"
-    };
-    const juce::StringArray shapes = {
-        "Sine", "Tri", "Saw Up", "Sqr", "Pulse", "Ramp",
-        "Exp Rse", "S&H", "Smth Rnd", "Logistic", "Stairs", "Dbl Sine", "SOMA"
-    };
-
-    lfo1SyncBox.addItemList(syncs, 1);  addChildComponent(lfo1SyncBox);
-    lfo1ShapeBox.addItemList(shapes, 1); addChildComponent(lfo1ShapeBox);
-    lfo2SyncBox.addItemList(syncs, 1);  addChildComponent(lfo2SyncBox);
-    lfo2ShapeBox.addItemList(shapes, 1); addChildComponent(lfo2ShapeBox);
+    lfo1SyncBox.addItemList(Params::syncOptions(), 1);   addChildComponent(lfo1SyncBox);
+    lfo1ShapeBox.addItemList(Params::shapeOptions(), 1); addChildComponent(lfo1ShapeBox);
+    lfo2SyncBox.addItemList(Params::syncOptions(), 1);   addChildComponent(lfo2SyncBox);
+    lfo2ShapeBox.addItemList(Params::shapeOptions(), 1); addChildComponent(lfo2ShapeBox);
 
     auto setupLfoKnob = [this](juce::Slider& s, juce::Label& nameLabel, juce::Label& valLabel,
                                const juce::String& name, double defaultVal) {
@@ -415,7 +401,7 @@ void PinkSwanAudioProcessorEditor::resized()
     place(pluckSlider, pluckLabel, 1, 0);
     place(inharmSlider, inharmLabel, 1, 1);
 
-    // Cadre central bas : icône Cygne 3/4 avant (bouton Panic)
+    // Cadre central bas : icône Cygne 3/4 avant gauche (bouton Panic)
     juce::Rectangle<int> swanCell(area.getX() + 1 * colWidth, area.getY() + 2 * rowHeight, colWidth, rowHeight);
     swanCell = swanCell.reduced(10);
     const int swanSize = juce::jmin(swanCell.getWidth(), swanCell.getHeight()) - 8;
@@ -458,7 +444,6 @@ void PinkSwanAudioProcessorEditor::resized()
             matrixLabels[i].setVisible(true);
         }
 
-        // Garde la lecture de valeur en haut à droite si la ligne de titres est au même niveau
         matrixReadoutLabel.setBounds(full.getWidth() - 250, topDrawerRow.getY() - 20, 240, 18);
 
         for (int i = 0; i < 12; ++i)
