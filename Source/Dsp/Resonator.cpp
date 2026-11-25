@@ -67,12 +67,10 @@ void Resonator::prepare(double sampleRate, int samplesPerBlock, int numChans)
     lastAppliedInCutoff = -1.0f;
     lastAppliedLoopCutoff = -1.0f;
 
-    // Enveloppe du gate : ouverture douce (~3 ms, zéro clic), relâchement de ~2.0 s (-60 dB en 2.0 s -> tau = 2.0 / 6.91)
     gateEnvelope = 1.0f;
     gateAttackCoeff = 1.0f - std::exp(-1.0f / (0.003f * (float)osSampleRate));
     gateReleaseCoeff = 1.0f - std::exp(-1.0f / (0.29f * (float)osSampleRate));
 
-    // Filtre de drift normalisé à 15 Hz (équivalent exact de 0.001f à 48 kHz X2)
     driftFilterCoeff = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 15.0f / (float)osSampleRate);
 
     loopOutputs[0] = 0.0f;
@@ -158,30 +156,30 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
         float beatsPerCycle = 1.0f;
         switch (syncIdx)
         {
-            case 1:  beatsPerCycle = 32.0f; break;                // 8 bars
-            case 2:  beatsPerCycle = 24.0f; break;                // 6 bars
-            case 3:  beatsPerCycle = 16.0f; break;                // 4 bars
-            case 4:  beatsPerCycle = 8.0f; break;                 // 2 bars
-            case 5:  beatsPerCycle = 4.0f; break;                 // 1 bar
-            case 6:  beatsPerCycle = 4.0f * (2.0f / 3.0f); break; // 1/1 T
-            case 7:  beatsPerCycle = 4.0f * 1.5f; break;          // 1/1 D
-            case 8:  beatsPerCycle = 2.0f; break;                 // 1/2
-            case 9:  beatsPerCycle = 2.0f * (2.0f / 3.0f); break; // 1/2 T
-            case 10: beatsPerCycle = 2.0f * 1.5f; break;          // 1/2 D
-            case 11: beatsPerCycle = 1.0f; break;                 // 1/4
-            case 12: beatsPerCycle = 2.0f / 3.0f; break;          // 1/4 T
-            case 13: beatsPerCycle = 1.5f; break;                 // 1/4 D
-            case 14: beatsPerCycle = 0.5f; break;                 // 1/8
-            case 15: beatsPerCycle = 0.5f * (2.0f / 3.0f); break; // 1/8 T
-            case 16: beatsPerCycle = 0.5f * 1.5f; break;          // 1/8 D
-            case 17: beatsPerCycle = 0.25f; break;                // 1/16
-            case 18: beatsPerCycle = 0.25f * (2.0f / 3.0f); break;// 1/16 T
-            case 19: beatsPerCycle = 0.25f * 1.5f; break;         // 1/16 D
-            case 20: beatsPerCycle = 5.0f; break;                 // 5/4
-            case 21: beatsPerCycle = 6.0f; break;                 // 6/4
-            case 22: beatsPerCycle = 7.0f; break;                 // 7/4
-            case 23: beatsPerCycle = 9.0f; break;                 // 9/4
-            case 24: beatsPerCycle = 18.0f; break;                // 18/4
+            case 1:  beatsPerCycle = 32.0f; break;
+            case 2:  beatsPerCycle = 24.0f; break;
+            case 3:  beatsPerCycle = 16.0f; break;
+            case 4:  beatsPerCycle = 8.0f; break;
+            case 5:  beatsPerCycle = 4.0f; break;
+            case 6:  beatsPerCycle = 4.0f * (2.0f / 3.0f); break;
+            case 7:  beatsPerCycle = 4.0f * 1.5f; break;
+            case 8:  beatsPerCycle = 2.0f; break;
+            case 9:  beatsPerCycle = 2.0f * (2.0f / 3.0f); break;
+            case 10: beatsPerCycle = 2.0f * 1.5f; break;
+            case 11: beatsPerCycle = 1.0f; break;
+            case 12: beatsPerCycle = 2.0f / 3.0f; break;
+            case 13: beatsPerCycle = 1.5f; break;
+            case 14: beatsPerCycle = 0.5f; break;
+            case 15: beatsPerCycle = 0.5f * (2.0f / 3.0f); break;
+            case 16: beatsPerCycle = 0.5f * 1.5f; break;
+            case 17: beatsPerCycle = 0.25f; break;
+            case 18: beatsPerCycle = 0.25f * (2.0f / 3.0f); break;
+            case 19: beatsPerCycle = 0.25f * 1.5f; break;
+            case 20: beatsPerCycle = 5.0f; break;
+            case 21: beatsPerCycle = 6.0f; break;
+            case 22: beatsPerCycle = 7.0f; break;
+            case 23: beatsPerCycle = 9.0f; break;
+            case 24: beatsPerCycle = 18.0f; break;
             default: beatsPerCycle = 1.0f; break;
         }
         return beatsPerSec / beatsPerCycle;
@@ -190,10 +188,9 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
     const float lfo1HzBase = getLfoHz(p.lfo1Sync, p.lfo1Rate);
     const float lfo2HzBase = getLfoHz(p.lfo2Sync, p.lfo2Rate);
 
-    // Courbe exponentielle symétrique sur les profondeurs de modulation croisée (-1..+1 -> ±5 octaves)
     auto expDepthOctaves = [](float d) noexcept -> float {
         constexpr float k = 3.0f;
-        constexpr float denom = 19.085536923f; // exp(3.0) - 1.0
+        constexpr float denom = 19.085536923f;
         const float mag = (std::exp(k * std::abs(d)) - 1.0f) / denom;
         return std::copysign(mag, d) * 5.0f;
     };
@@ -227,7 +224,6 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // LFO sample par sample avec modulation croisée exponentielle (en octaves)
         const float lfo1Hz = juce::jlimit(0.01f, 100.0f, lfo1HzBase * std::exp2(lfo2Value * crossOctM2ToLfo1));
         const float lfo2Hz = juce::jlimit(0.01f, 100.0f, lfo2HzBase * std::exp2(lfo1Value * crossOctM1ToLfo2));
 
@@ -259,3 +255,141 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
         const float selfModAmt = mod(selfModSmoothed.getNextValue(), p.m1_self, p.m2_self, 0.0f, 1.0f);
         const float drift = mod(jitterSmoothed.getNextValue(), p.m1_drift, p.m2_drift, 0.0f, 1.0f);
         const float wetMix = mod(dryWetSmoothed.getNextValue(), p.m1_drywet, p.m2_drywet, 0.0f, 1.0f);
+        const float currentWetGain = mod(wetGainSmoothed.getNextValue(), p.m1_wetgain, p.m2_wetgain, 0.0f, 2.0f);
+
+        if (std::abs(inCut - lastAppliedInCutoff) > 0.05f)
+        {
+            for (int ch = 0; ch < activeChannels; ++ch)
+                channels[(size_t)ch].inputFilter.setCutoffFrequency(inCut);
+            lastAppliedInCutoff = inCut;
+        }
+        if (std::abs(loopCut - lastAppliedLoopCutoff) > 0.05f)
+        {
+            for (int ch = 0; ch < activeChannels; ++ch)
+                channels[(size_t)ch].loopFilter.setCutoff(loopCut, (float)sr);
+            lastAppliedLoopCutoff = loopCut;
+        }
+
+        const float baseDelaySamples = semitonesToDelaySamples(pitchSt, sr);
+
+        float inharmCoeff = 0.0f;
+        float delaySamples = baseDelaySamples;
+        if (inharm > 0.001f && baseDelaySamples > 28.0f)
+        {
+            const float omega0 = juce::MathConstants<float>::twoPi / baseDelaySamples;
+            float desiredA = juce::jlimit(0.0f, 0.95f, inharm * 0.95f);
+            float totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
+
+            if (totalPhaseDelay > baseDelaySamples - 4.0f)
+            {
+                float lo = 0.0f;
+                float hi = desiredA;
+                for (int iter = 0; iter < 6; ++iter)
+                {
+                    const float mid = 0.5f * (lo + hi);
+                    const float d = (float)numAllpassCells * allpassPhaseDelay(mid, omega0);
+                    if (d <= baseDelaySamples - 4.0f)
+                        lo = mid;
+                    else
+                        hi = mid;
+                }
+                desiredA = lo;
+                totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
+            }
+
+            inharmCoeff = desiredA;
+            delaySamples = baseDelaySamples - totalPhaseDelay;
+        }
+
+        if (drift > 0.001f)
+        {
+            float driftSum = 0.0f;
+            for (int j = 0; j < 2; ++j)
+            {
+                const float noise = jitterDist(jitterGen);
+                jitterState[j] += driftFilterCoeff * (noise - jitterState[j]);
+                driftSum += jitterState[j];
+            }
+            delaySamples += driftSum * drift * (float)(sr * 0.005);
+        }
+
+        if (selfModAmt > 0.001f)
+        {
+            float modulator = 0.0f;
+            for (int ch = 0; ch < activeChannels; ++ch)
+                modulator += channels[(size_t)ch].modFilter.process(loopOutputs[ch]);
+            modulator /= (float)activeChannels;
+            delaySamples += modulator * selfModAmt * (float)(sr * 0.01);
+        }
+
+        delaySamples = juce::jlimit(4.0f, maxDelaySamples - 8.0f, delaySamples);
+
+        float inputAbs = 0.0f;
+        for (int ch = 0; ch < activeChannels; ++ch)
+            inputAbs = juce::jmax(inputAbs, std::abs(channelData[ch][i]));
+
+        const float gateTarget = (!p.gateEnabled || inputAbs > 0.00398107f) ? 1.0f : 0.0f;
+        const float gateCoeff = gateTarget > gateEnvelope ? gateAttackCoeff : gateReleaseCoeff;
+        gateEnvelope += gateCoeff * (gateTarget - gateEnvelope);
+
+        for (int ch = 0; ch < activeChannels; ++ch)
+        {
+            auto& state = channels[(size_t)ch];
+            state.delayLine.setDelay(delaySamples);
+            float delayed = state.delayLine.popSample(0);
+
+            if (inharmCoeff > 0.0005f)
+            {
+                for (int j = 0; j < numAllpassCells; ++j)
+                {
+                    state.inharmAllpass[j].setCoeff(inharmCoeff);
+                    delayed = state.inharmAllpass[j].process(delayed);
+                }
+            }
+
+            float loopFiltered = state.loopFilter.process(delayed);
+            loopFiltered = state.dcBlocker.process(loopFiltered);
+            loopOutputs[ch] = loopFiltered;
+        }
+
+        for (int ch = 0; ch < activeChannels; ++ch)
+        {
+            auto& state = channels[(size_t)ch];
+            const float dry = channelData[ch][i];
+
+            float crossFeedbackSignal = 0.0f;
+            if (activeChannels == 2)
+                crossFeedbackSignal = loopOutputs[1 - ch] * crossFB;
+
+            float pluckFiltered = dry;
+            if (pluck > 0.001f)
+            {
+                const float pluckDelayTime = juce::jlimit(2.0f, 8184.0f, delaySamples * 0.5f);
+                state.pluckDelay.setDelay(pluckDelayTime);
+                const float pluckDelayed = state.pluckDelay.popSample(0);
+                const float mixAmt = juce::jlimit(0.0f, 1.0f, pluck * 1.2f);
+                pluckFiltered = dry * (1.0f - mixAmt) + (dry - pluckDelayed) * mixAmt;
+                pluckFiltered *= (1.0f + (pluck * 0.5f));
+                state.pluckDelay.pushSample(0, dry);
+            }
+
+            const float inputFiltered = state.inputFilter.processSample(0, pluckFiltered);
+            float toWrite = inputFiltered + (loopOutputs[ch] * fb) + crossFeedbackSignal;
+            toWrite = std::tanh(toWrite);
+
+            state.delayLine.pushSample(0, toWrite);
+
+            float wetSignal = loopOutputs[ch] + crossFeedbackSignal;
+            wetSignal *= currentWetGain * gateEnvelope;
+
+            channelData[ch][i] = dry * (1.0f - wetMix) + wetSignal * wetMix;
+        }
+    }
+}
+
+float Resonator::semitonesToDelaySamples(float semitones, double sr) const noexcept
+{
+    const float freq = baseFreqHz * std::pow(2.0f, semitones / 12.0f);
+    const float delay = (float)(sr / freq);
+    return juce::jlimit(4.0f, maxDelaySamples - 8.0f, delay);
+}
