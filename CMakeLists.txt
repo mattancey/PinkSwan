@@ -58,7 +58,7 @@ target_link_libraries(PinkSwan PRIVATE
     juce::juce_recommended_warning_flags
 )
 
-# --- Tests unitaires DSP (binaire console dédié) ---
+# --- Tests unitaires DSP (binaire console dédié, sans les tests internes de JUCE) ---
 enable_testing()
 
 juce_add_console_app(PinkSwanTests
@@ -73,7 +73,6 @@ target_sources(PinkSwanTests PRIVATE
 target_compile_definitions(PinkSwanTests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_UNIT_TESTS=1
     JUCE_STANDALONE_APPLICATION=1
 )
 
