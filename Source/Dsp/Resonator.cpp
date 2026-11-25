@@ -72,8 +72,8 @@ void Resonator::prepare(double sampleRate, int samplesPerBlock, int numChans)
     gateAttackCoeff = 1.0f - std::exp(-1.0f / (0.003f * (float)osSampleRate));
     gateReleaseCoeff = 1.0f - std::exp(-1.0f / (0.29f * (float)osSampleRate));
 
-    // Filtre de drift normalisé à ~12 Hz quel que soit le sample rate
-    driftFilterCoeff = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 12.0f / (float)osSampleRate);
+    // Filtre de drift normalisé à 15 Hz (équivalent exact de 0.001f à 48 kHz X2)
+    driftFilterCoeff = 1.0f - std::exp(-juce::MathConstants<float>::twoPi * 15.0f / (float)osSampleRate);
 
     loopOutputs[0] = 0.0f;
     loopOutputs[1] = 0.0f;
@@ -268,7 +268,7 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
 
         // Calcul d'inharmonicité avec compensation exacte du délai de phase à la fréquence jouée
         float inharmCoeff = 0.0f;
-        float compensatedBaseDelay = baseDelaySamples;
+        float delaySamples = baseDelaySamples;
         if (inharm > 0.001f && baseDelaySamples > 28.0f)
         {
             const float omega0 = juce::MathConstants<float>::twoPi / baseDelaySamples;
@@ -293,33 +293,33 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
             }
 
             inharmCoeff = desiredA;
-            compensatedBaseDelay = baseDelaySamples - totalPhaseDelay;
+            delaySamples = baseDelaySamples - totalPhaseDelay;
+        }
+
+        // Drift mono-cohérent avec la somme de 2 bruits lissés à 15 Hz (fidèle à BlueSwan, stable au SR)
+        if (drift > 0.001f)
+        {
+            float driftSum = 0.0f;
+            for (int j = 0; j < 2; ++j)
+            {
+                const float noise = jitterDist(jitterGen);
+                jitterState[j] += driftFilterCoeff * (noise - jitterState[j]);
+                driftSum += jitterState[j];
+            }
+            delaySamples += driftSum * drift * (float)(sr * 0.005);
         }
 
         // Self-modulation partagée sur la moyenne des canaux
-        float selfModOffsetSamples = 0.0f;
         if (selfModAmt > 0.001f)
         {
             float modulator = 0.0f;
             for (int ch = 0; ch < activeChannels; ++ch)
                 modulator += channels[(size_t)ch].modFilter.process(loopOutputs[ch]);
             modulator /= (float)activeChannels;
-            selfModOffsetSamples = modulator * selfModAmt * (float)(sr * 0.01);
+            delaySamples += modulator * selfModAmt * (float)(sr * 0.01);
         }
 
-        // Délais indépendants par canal (vrai Drift stéréo)
-        float delaySamplesCh[2] = { compensatedBaseDelay, compensatedBaseDelay };
-        for (int ch = 0; ch < activeChannels; ++ch)
-        {
-            float d = compensatedBaseDelay + selfModOffsetSamples;
-            if (drift > 0.001f)
-            {
-                const float noise = jitterDist(jitterGen);
-                jitterState[ch] += driftFilterCoeff * (noise - jitterState[ch]);
-                d += jitterState[ch] * drift * (float)(sr * 0.005);
-            }
-            delaySamplesCh[ch] = juce::jlimit(4.0f, maxDelaySamples - 8.0f, d);
-        }
+        delaySamples = juce::jlimit(4.0f, maxDelaySamples - 8.0f, delaySamples);
 
         // Gate optionnel sans clic (seuil -48 dB = 0.00398107, relâchement 2.0 s)
         float inputAbs = 0.0f;
@@ -334,7 +334,7 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
         for (int ch = 0; ch < activeChannels; ++ch)
         {
             auto& state = channels[(size_t)ch];
-            state.delayLine.setDelay(delaySamplesCh[ch]);
+            state.delayLine.setDelay(delaySamples);
             float delayed = state.delayLine.popSample(0);
 
             if (inharmCoeff > 0.0005f)
@@ -364,7 +364,7 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
             float pluckFiltered = dry;
             if (pluck > 0.001f)
             {
-                const float pluckDelayTime = juce::jlimit(2.0f, 8184.0f, baseDelaySamples * 0.5f);
+                const float pluckDelayTime = juce::jlimit(2.0f, 8184.0f, delaySamples * 0.5f);
                 state.pluckDelay.setDelay(pluckDelayTime);
                 const float pluckDelayed = state.pluckDelay.popSample(0);
                 const float mixAmt = juce::jlimit(0.0f, 1.0f, pluck * 1.2f);
