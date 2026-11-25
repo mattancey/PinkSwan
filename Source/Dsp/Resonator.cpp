@@ -158,29 +158,30 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
         float beatsPerCycle = 1.0f;
         switch (syncIdx)
         {
-            case 1:  beatsPerCycle = 16.0f; break;
-            case 2:  beatsPerCycle = 8.0f; break;
-            case 3:  beatsPerCycle = 4.0f; break;
-            case 4:  beatsPerCycle = 4.0f; break;
-            case 5:  beatsPerCycle = 4.0f * (2.0f / 3.0f); break;
-            case 6:  beatsPerCycle = 4.0f * 1.5f; break;
-            case 7:  beatsPerCycle = 2.0f; break;
-            case 8:  beatsPerCycle = 2.0f * (2.0f / 3.0f); break;
-            case 9:  beatsPerCycle = 2.0f * 1.5f; break;
-            case 10: beatsPerCycle = 1.0f; break;
-            case 11: beatsPerCycle = 2.0f / 3.0f; break;
-            case 12: beatsPerCycle = 1.5f; break;
-            case 13: beatsPerCycle = 0.5f; break;
-            case 14: beatsPerCycle = 0.5f * (2.0f / 3.0f); break;
-            case 15: beatsPerCycle = 0.5f * 1.5f; break;
-            case 16: beatsPerCycle = 0.25f; break;
-            case 17: beatsPerCycle = 0.25f * (2.0f / 3.0f); break;
-            case 18: beatsPerCycle = 0.25f * 1.5f; break;
-            case 19: beatsPerCycle = 5.0f; break;
-            case 20: beatsPerCycle = 6.0f; break;
-            case 21: beatsPerCycle = 7.0f; break;
-            case 22: beatsPerCycle = 9.0f; break;
-            case 23: beatsPerCycle = 18.0f; break;
+            case 1:  beatsPerCycle = 32.0f; break;                // 8 bars
+            case 2:  beatsPerCycle = 24.0f; break;                // 6 bars
+            case 3:  beatsPerCycle = 16.0f; break;                // 4 bars
+            case 4:  beatsPerCycle = 8.0f; break;                 // 2 bars
+            case 5:  beatsPerCycle = 4.0f; break;                 // 1 bar
+            case 6:  beatsPerCycle = 4.0f * (2.0f / 3.0f); break; // 1/1 T
+            case 7:  beatsPerCycle = 4.0f * 1.5f; break;          // 1/1 D
+            case 8:  beatsPerCycle = 2.0f; break;                 // 1/2
+            case 9:  beatsPerCycle = 2.0f * (2.0f / 3.0f); break; // 1/2 T
+            case 10: beatsPerCycle = 2.0f * 1.5f; break;          // 1/2 D
+            case 11: beatsPerCycle = 1.0f; break;                 // 1/4
+            case 12: beatsPerCycle = 2.0f / 3.0f; break;          // 1/4 T
+            case 13: beatsPerCycle = 1.5f; break;                 // 1/4 D
+            case 14: beatsPerCycle = 0.5f; break;                 // 1/8
+            case 15: beatsPerCycle = 0.5f * (2.0f / 3.0f); break; // 1/8 T
+            case 16: beatsPerCycle = 0.5f * 1.5f; break;          // 1/8 D
+            case 17: beatsPerCycle = 0.25f; break;                // 1/16
+            case 18: beatsPerCycle = 0.25f * (2.0f / 3.0f); break;// 1/16 T
+            case 19: beatsPerCycle = 0.25f * 1.5f; break;         // 1/16 D
+            case 20: beatsPerCycle = 5.0f; break;                 // 5/4
+            case 21: beatsPerCycle = 6.0f; break;                 // 6/4
+            case 22: beatsPerCycle = 7.0f; break;                 // 7/4
+            case 23: beatsPerCycle = 9.0f; break;                 // 9/4
+            case 24: beatsPerCycle = 18.0f; break;                // 18/4
             default: beatsPerCycle = 1.0f; break;
         }
         return beatsPerSec / beatsPerCycle;
