@@ -190,6 +190,16 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
     const float lfo1HzBase = getLfoHz(p.lfo1Sync, p.lfo1Rate);
     const float lfo2HzBase = getLfoHz(p.lfo2Sync, p.lfo2Rate);
 
+    // Courbe exponentielle symétrique sur les profondeurs de modulation croisée (-1..+1 -> ±5 octaves)
+    auto expDepthOctaves = [](float d) noexcept -> float {
+        constexpr float k = 3.0f;
+        constexpr float denom = 19.085536923f; // exp(3.0) - 1.0
+        const float mag = (std::exp(k * std::abs(d)) - 1.0f) / denom;
+        return std::copysign(mag, d) * 5.0f;
+    };
+    const float crossOctM2ToLfo1 = expDepthOctaves(p.m2_lfo1);
+    const float crossOctM1ToLfo2 = expDepthOctaves(p.m1_lfo2);
+
     lfo1.setShape(p.lfo1Shape);
     lfo1.setPulseWidth(p.lfo1Pw);
     lfo1.setSmooth(p.lfo1Smooth);
@@ -217,9 +227,9 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
 
     for (int i = 0; i < numSamples; ++i)
     {
-        // LFO sample par sample avec modulation croisée
-        const float lfo1Hz = juce::jlimit(0.01f, 100.0f, lfo1HzBase + (lfo2Value * p.m2_lfo1 * 50.0f));
-        const float lfo2Hz = juce::jlimit(0.01f, 100.0f, lfo2HzBase + (lfo1Value * p.m1_lfo2 * 50.0f));
+        // LFO sample par sample avec modulation croisée exponentielle (en octaves)
+        const float lfo1Hz = juce::jlimit(0.01f, 100.0f, lfo1HzBase * std::exp2(lfo2Value * crossOctM2ToLfo1));
+        const float lfo2Hz = juce::jlimit(0.01f, 100.0f, lfo2HzBase * std::exp2(lfo1Value * crossOctM1ToLfo2));
 
         lfo1Value = p.lfo1Bypass ? 0.0f : lfo1.processSample(lfo1Hz, p.lfo1Phase, (float)sr);
         lfo2Value = p.lfo2Bypass ? 0.0f : lfo2.processSample(lfo2Hz, p.lfo2Phase, (float)sr);
@@ -249,148 +259,3 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
         const float selfModAmt = mod(selfModSmoothed.getNextValue(), p.m1_self, p.m2_self, 0.0f, 1.0f);
         const float drift = mod(jitterSmoothed.getNextValue(), p.m1_drift, p.m2_drift, 0.0f, 1.0f);
         const float wetMix = mod(dryWetSmoothed.getNextValue(), p.m1_drywet, p.m2_drywet, 0.0f, 1.0f);
-        const float currentWetGain = mod(wetGainSmoothed.getNextValue(), p.m1_wetgain, p.m2_wetgain, 0.0f, 2.0f);
-
-        // Mise à jour des filtres sans recalcul trigonométrique inutile à l'arrêt
-        if (std::abs(inCut - lastAppliedInCutoff) > 0.05f)
-        {
-            for (int ch = 0; ch < activeChannels; ++ch)
-                channels[(size_t)ch].inputFilter.setCutoffFrequency(inCut);
-            lastAppliedInCutoff = inCut;
-        }
-        if (std::abs(loopCut - lastAppliedLoopCutoff) > 0.05f)
-        {
-            for (int ch = 0; ch < activeChannels; ++ch)
-                channels[(size_t)ch].loopFilter.setCutoff(loopCut, (float)sr);
-            lastAppliedLoopCutoff = loopCut;
-        }
-
-        const float baseDelaySamples = semitonesToDelaySamples(pitchSt, sr);
-
-        // Calcul d'inharmonicité avec compensation exacte du délai de phase à la fréquence jouée
-        float inharmCoeff = 0.0f;
-        float delaySamples = baseDelaySamples;
-        if (inharm > 0.001f && baseDelaySamples > 28.0f)
-        {
-            const float omega0 = juce::MathConstants<float>::twoPi / baseDelaySamples;
-            float desiredA = juce::jlimit(0.0f, 0.95f, inharm * 0.95f);
-            float totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
-
-            if (totalPhaseDelay > baseDelaySamples - 4.0f)
-            {
-                float lo = 0.0f;
-                float hi = desiredA;
-                for (int iter = 0; iter < 6; ++iter)
-                {
-                    const float mid = 0.5f * (lo + hi);
-                    const float d = (float)numAllpassCells * allpassPhaseDelay(mid, omega0);
-                    if (d <= baseDelaySamples - 4.0f)
-                        lo = mid;
-                    else
-                        hi = mid;
-                }
-                desiredA = lo;
-                totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
-            }
-
-            inharmCoeff = desiredA;
-            delaySamples = baseDelaySamples - totalPhaseDelay;
-        }
-
-        // Drift mono-cohérent avec la somme de 2 bruits lissés à 15 Hz (fidèle à BlueSwan, stable au SR)
-        if (drift > 0.001f)
-        {
-            float driftSum = 0.0f;
-            for (int j = 0; j < 2; ++j)
-            {
-                const float noise = jitterDist(jitterGen);
-                jitterState[j] += driftFilterCoeff * (noise - jitterState[j]);
-                driftSum += jitterState[j];
-            }
-            delaySamples += driftSum * drift * (float)(sr * 0.005);
-        }
-
-        // Self-modulation partagée sur la moyenne des canaux
-        if (selfModAmt > 0.001f)
-        {
-            float modulator = 0.0f;
-            for (int ch = 0; ch < activeChannels; ++ch)
-                modulator += channels[(size_t)ch].modFilter.process(loopOutputs[ch]);
-            modulator /= (float)activeChannels;
-            delaySamples += modulator * selfModAmt * (float)(sr * 0.01);
-        }
-
-        delaySamples = juce::jlimit(4.0f, maxDelaySamples - 8.0f, delaySamples);
-
-        // Gate optionnel sans clic (seuil -48 dB = 0.00398107, relâchement 2.0 s)
-        float inputAbs = 0.0f;
-        for (int ch = 0; ch < activeChannels; ++ch)
-            inputAbs = juce::jmax(inputAbs, std::abs(channelData[ch][i]));
-
-        const float gateTarget = (!p.gateEnabled || inputAbs > 0.00398107f) ? 1.0f : 0.0f;
-        const float gateCoeff = gateTarget > gateEnvelope ? gateAttackCoeff : gateReleaseCoeff;
-        gateEnvelope += gateCoeff * (gateTarget - gateEnvelope);
-
-        // 1) Lecture de la boucle de résonance pour chaque canal
-        for (int ch = 0; ch < activeChannels; ++ch)
-        {
-            auto& state = channels[(size_t)ch];
-            state.delayLine.setDelay(delaySamples);
-            float delayed = state.delayLine.popSample(0);
-
-            if (inharmCoeff > 0.0005f)
-            {
-                for (int j = 0; j < numAllpassCells; ++j)
-                {
-                    state.inharmAllpass[j].setCoeff(inharmCoeff);
-                    delayed = state.inharmAllpass[j].process(delayed);
-                }
-            }
-
-            float loopFiltered = state.loopFilter.process(delayed);
-            loopFiltered = state.dcBlocker.process(loopFiltered);
-            loopOutputs[ch] = loopFiltered;
-        }
-
-        // 2) Excitation, cross-feedback, écriture dans la ligne à retard et mix final
-        for (int ch = 0; ch < activeChannels; ++ch)
-        {
-            auto& state = channels[(size_t)ch];
-            const float dry = channelData[ch][i];
-
-            float crossFeedbackSignal = 0.0f;
-            if (activeChannels == 2)
-                crossFeedbackSignal = loopOutputs[1 - ch] * crossFB;
-
-            float pluckFiltered = dry;
-            if (pluck > 0.001f)
-            {
-                const float pluckDelayTime = juce::jlimit(2.0f, 8184.0f, delaySamples * 0.5f);
-                state.pluckDelay.setDelay(pluckDelayTime);
-                const float pluckDelayed = state.pluckDelay.popSample(0);
-                const float mixAmt = juce::jlimit(0.0f, 1.0f, pluck * 1.2f);
-                pluckFiltered = dry * (1.0f - mixAmt) + (dry - pluckDelayed) * mixAmt;
-                pluckFiltered *= (1.0f + (pluck * 0.5f));
-                state.pluckDelay.pushSample(0, dry);
-            }
-
-            const float inputFiltered = state.inputFilter.processSample(0, pluckFiltered);
-            float toWrite = inputFiltered + (loopOutputs[ch] * fb) + crossFeedbackSignal;
-            toWrite = std::tanh(toWrite);
-
-            state.delayLine.pushSample(0, toWrite);
-
-            float wetSignal = loopOutputs[ch] + crossFeedbackSignal;
-            wetSignal *= currentWetGain * gateEnvelope;
-
-            channelData[ch][i] = dry * (1.0f - wetMix) + wetSignal * wetMix;
-        }
-    }
-}
-
-float Resonator::semitonesToDelaySamples(float semitones, double sr) const noexcept
-{
-    const float freq = baseFreqHz * std::pow(2.0f, semitones / 12.0f);
-    const float delay = (float)(sr / freq);
-    return juce::jlimit(4.0f, maxDelaySamples - 8.0f, delay);
-}
