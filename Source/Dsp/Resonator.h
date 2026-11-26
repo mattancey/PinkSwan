@@ -136,6 +136,9 @@ private:
     float lastAppliedInCutoff = -1.0f;
     float lastAppliedLoopCutoff = -1.0f;
 
+    float inharmCoeffState = 0.0f;
+    float inharmCoeffSmoothAlpha = 0.001f;
+
     float gateEnvelope = 1.0f;
     float gateAttackCoeff = 0.01f;
     float gateReleaseCoeff = 0.0001f;
@@ -149,6 +152,7 @@ private:
 
     float semitonesToDelaySamples(float semitones, double sr) const noexcept;
     static float allpassPhaseDelay(float a, float omega) noexcept;
+    static float maxAllpassCoeffForDelay(float maxTotalDelay, float omega) noexcept;
     void processInternal(juce::dsp::AudioBlock<float>& block, const ModParams& p, double bpm, bool isNegative, double sr);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(Resonator)
