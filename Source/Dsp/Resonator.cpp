@@ -67,6 +67,9 @@ void Resonator::prepare(double sampleRate, int samplesPerBlock, int numChans)
     lastAppliedInCutoff = -1.0f;
     lastAppliedLoopCutoff = -1.0f;
 
+    inharmCoeffState = 0.0f;
+    inharmCoeffSmoothAlpha = 1.0f - std::exp(-1.0f / (0.025f * (float)osSampleRate));
+
     gateEnvelope = 1.0f;
     gateAttackCoeff = 1.0f - std::exp(-1.0f / (0.003f * (float)osSampleRate));
     gateReleaseCoeff = 1.0f - std::exp(-1.0f / (0.29f * (float)osSampleRate));
@@ -102,6 +105,7 @@ void Resonator::reset()
     loopOutputs[1] = 0.0f;
     jitterState[0] = 0.0f;
     jitterState[1] = 0.0f;
+    inharmCoeffState = 0.0f;
     gateEnvelope = 1.0f;
     lastAppliedInCutoff = -1.0f;
     lastAppliedLoopCutoff = -1.0f;
@@ -136,6 +140,19 @@ float Resonator::allpassPhaseDelay(float a, float omega) noexcept
     const float sinW = std::sin(omega);
     const float cosW = std::cos(omega);
     return 1.0f + (2.0f / omega) * std::atan2(a * sinW, 1.0f - a * cosW);
+}
+
+float Resonator::maxAllpassCoeffForDelay(float maxTotalDelay, float omega) noexcept
+{
+    if (maxTotalDelay <= (float)numAllpassCells)
+        return 0.0f;
+
+    const float theta = 0.5f * omega * (maxTotalDelay / (float)numAllpassCells - 1.0f);
+    const float denom = std::sin(omega + theta);
+    if (denom <= 1.0e-5f)
+        return 0.0f;
+
+    return juce::jlimit(0.0f, 0.95f, std::sin(theta) / denom);
 }
 
 void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModParams& p, double bpm, bool isNegative, double sr)
@@ -272,33 +289,28 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
 
         const float baseDelaySamples = semitonesToDelaySamples(pitchSt, sr);
 
-        float inharmCoeff = 0.0f;
+        // Inharmonicité continue, lissée après LFO et bornée analytiquement (zéro saut/craquement)
+        const bool allpassActive = baseDelaySamples > 26.0f;
         float delaySamples = baseDelaySamples;
-        if (inharm > 0.001f && baseDelaySamples > 28.0f)
+
+        if (allpassActive)
         {
             const float omega0 = juce::MathConstants<float>::twoPi / baseDelaySamples;
-            float desiredA = juce::jlimit(0.0f, 0.95f, inharm * 0.95f);
-            float totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
+            const float desiredA = juce::jlimit(0.0f, 0.95f, inharm * 0.95f);
+            const float maxA = maxAllpassCoeffForDelay(baseDelaySamples - 4.0f, omega0);
+            const float targetA = juce::jmin(desiredA, maxA);
 
-            if (totalPhaseDelay > baseDelaySamples - 4.0f)
-            {
-                float lo = 0.0f;
-                float hi = desiredA;
-                for (int iter = 0; iter < 6; ++iter)
-                {
-                    const float mid = 0.5f * (lo + hi);
-                    const float d = (float)numAllpassCells * allpassPhaseDelay(mid, omega0);
-                    if (d <= baseDelaySamples - 4.0f)
-                        lo = mid;
-                    else
-                        hi = mid;
-                }
-                desiredA = lo;
-                totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(desiredA, omega0);
-            }
+            inharmCoeffState += inharmCoeffSmoothAlpha * (targetA - inharmCoeffState);
+            inharmCoeffState = juce::jmin(inharmCoeffState, maxA);
+            if (inharmCoeffState < 1.0e-6f && targetA == 0.0f)
+                inharmCoeffState = 0.0f;
 
-            inharmCoeff = desiredA;
+            const float totalPhaseDelay = (float)numAllpassCells * allpassPhaseDelay(inharmCoeffState, omega0);
             delaySamples = baseDelaySamples - totalPhaseDelay;
+        }
+        else
+        {
+            inharmCoeffState = 0.0f;
         }
 
         if (drift > 0.001f)
@@ -338,11 +350,11 @@ void Resonator::processInternal(juce::dsp::AudioBlock<float>& block, const ModPa
             state.delayLine.setDelay(delaySamples);
             float delayed = state.delayLine.popSample(0);
 
-            if (inharmCoeff > 0.0005f)
+            if (allpassActive)
             {
                 for (int j = 0; j < numAllpassCells; ++j)
                 {
-                    state.inharmAllpass[j].setCoeff(inharmCoeff);
+                    state.inharmAllpass[j].setCoeff(inharmCoeffState);
                     delayed = state.inharmAllpass[j].process(delayed);
                 }
             }
