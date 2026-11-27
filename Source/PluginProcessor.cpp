@@ -154,6 +154,7 @@ juce::AudioProcessorEditor* PinkSwanAudioProcessor::createEditor()
 void PinkSwanAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
+    presetManager.writeSlotsToState(state);
     std::unique_ptr<juce::XmlElement> xml(state.createXml());
     copyXmlToBinary(*xml, destData);
 }
@@ -164,6 +165,7 @@ void PinkSwanAudioProcessor::setStateInformation(const void* data, int sizeInByt
     if (xmlState != nullptr && xmlState->hasTagName(apvts.state.getType()))
     {
         apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+        presetManager.loadSlotsFromState(apvts.state);
         stateRevision.fetch_add(1, std::memory_order_release);
     }
 }
